@@ -690,11 +690,8 @@ function blockInner(block) {
     case 'rule': {
       const sectionColors={'Scoring':'#f5c542','Safety':'#ff7b77','General':'#6ab3ff','Gameplay General':'#22c55e','Specific Game':'#22c55e','Robot Rules':'#c084fc','Robot Skills':'#c084fc','Tournament':'#fb923c','VEX U':'#94a3b8'};
       const accent=sectionColors[d.section]||'#ccc';
-      const firstLine = (d.text||'').split('
-')[0];
-      const bodyText = (d.text||'').split('
-').slice(1).join('
-').trim();
+      const firstLine = (d.text||'').split('\n')[0];
+      const bodyText = (d.text||'').split('\n').slice(1).join('\n').trim();
       return `<div class="block-rule" style="border-left-color:${accent};">
         <div class="block-rule-id" style="color:${accent};">${esc(d.id||'')}</div>
         <div class="block-rule-title">${esc(firstLine)}</div>
@@ -1237,10 +1234,8 @@ function renderRulesPanel(filter) {
     <div style="padding:4px 2px 2px;font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;">${sec}</div>
     ${filtered.filter(r => r.section === sec).map(r => {
       const accent = sectionColors[r.section] || '#888';
-      const firstLine = r.text.split('
-')[0];
-      const preview = r.text.split('
-').slice(1).join(' ').trim().slice(0,120);
+      const firstLine = r.text.split('\n')[0];
+      const preview = r.text.split('\n').slice(1).join(' ').trim().slice(0,120);
       return `<div class="rule-item" draggable="true" ondragstart="ruleDragStart(event,'${r.id}')" style="border-left:3px solid ${accent};">
         <div class="rule-item-id" style="color:${accent};"> ${r.id}</div>
         <div class="rule-item-title">${firstLine}</div>
