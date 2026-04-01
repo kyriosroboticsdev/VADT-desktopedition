@@ -1,0 +1,7 @@
+node_modules/
+dist/
+manual_raw.txt
+manual_array.js
+PushBack3.0.pdf
+*.log
+.DS_Store

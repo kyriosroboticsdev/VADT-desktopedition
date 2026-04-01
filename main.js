@@ -1,0 +1,181 @@
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const path   = require('path');
+const { spawn } = require('child_process');
+const fs     = require('fs');
+const os     = require('os');
+const { autoUpdater } = require('electron-updater');
+
+// ─── WINDOW ───────────────────────────────────────────────────────────────────
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width:  1440,
+    height: 900,
+    minWidth:  900,
+    minHeight: 600,
+    title: 'VADT',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  win.loadFile('index.html');
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+  // Only check for updates in a packaged build, not during development.
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
+});
+
+// ─── AUTO-UPDATER ─────────────────────────────────────────────────────────────
+
+autoUpdater.on('update-available', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) win.webContents.send('update-status', 'Downloading update…');
+});
+
+autoUpdater.on('update-downloaded', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    win.webContents.send('update-status', 'Update ready — restart to install');
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update Ready',
+      message: 'A new version of VADT has been downloaded. Restart the app to apply it.',
+      buttons: ['Restart Now', 'Later'],
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('Auto-updater error:', err.message);
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+// ─── IPC: FILE DIALOG ─────────────────────────────────────────────────────────
+
+ipcMain.handle('open-file-dialog', async (_event, { filters }) => {
+  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters });
+  return result.filePaths[0] || null;
+});
+
+// ─── IPC: LOAD LOCAL VIDEO ────────────────────────────────────────────────────
+// Returns a file:// URL the renderer can set as a <video> src.
+
+ipcMain.handle('get-file-url', (_event, filePath) => {
+  return `file://${filePath.replace(/\\/g, '/')}`;
+});
+
+// ─── IPC: YT-DLP DOWNLOAD ─────────────────────────────────────────────────────
+// Downloads a time-windowed clip from a YouTube URL.
+// Sends 'ytdlp-progress' events back to the renderer during download.
+
+ipcMain.handle('ytdlp-download', async (event, { url, startTime, endTime }) => {
+  const outPath = path.join(os.tmpdir(), `vadt_clip_${Date.now()}.mp4`);
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '--download-sections', `*${startTime}-${endTime}`,
+      '-f', 'best[height<=720][ext=mp4]/best[height<=720]/best',
+      '-o', outPath,
+      url,
+    ];
+
+    const proc = spawn('yt-dlp', args);
+
+    proc.stdout.on('data', d => {
+      event.sender.send('ytdlp-progress', { type: 'stdout', text: d.toString() });
+    });
+    proc.stderr.on('data', d => {
+      event.sender.send('ytdlp-progress', { type: 'stderr', text: d.toString() });
+    });
+    proc.on('close', code => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`yt-dlp exited with code ${code}`));
+    });
+    proc.on('error', err => {
+      reject(new Error(
+        err.code === 'ENOENT'
+          ? 'yt-dlp not found — install it from https://github.com/yt-dlp/yt-dlp'
+          : err.message
+      ));
+    });
+  });
+});
+
+// ─── IPC: CHECK YT-DLP ────────────────────────────────────────────────────────
+
+ipcMain.handle('check-ytdlp', async () => {
+  return new Promise(resolve => {
+    const proc = spawn('yt-dlp', ['--version']);
+    proc.on('close', code => resolve(code === 0));
+    proc.on('error', () => resolve(false));
+  });
+});
+
+// ─── IPC: OPEN EXTERNAL LINK ──────────────────────────────────────────────────
+
+ipcMain.handle('open-external', (_event, url) => {
+  shell.openExternal(url);
+});
+
+// ─── IPC: GOOGLE AUTH (ELECTRON OAUTH FLOW) ───────────────────────────────────
+// Opens a child BrowserWindow for Google sign-in and intercepts the redirect
+// back to vexscout.vercel.app to extract the access token without navigating
+// the main window away from the Electron app.
+
+ipcMain.handle('google-auth', async (event, authUrl) => {
+  return new Promise((resolve, reject) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const authWin = new BrowserWindow({
+      width: 500,
+      height: 650,
+      parent,
+      modal: true,
+      title: 'Sign in with Google',
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+
+    authWin.loadURL(authUrl);
+
+    const tryExtract = (url) => {
+      if (!url.includes('vexscout.vercel.app')) return false;
+      const hash = url.split('#')[1] || '';
+      const token = new URLSearchParams(hash).get('access_token');
+      if (!token) return false;
+      resolve(token);
+      authWin.destroy();
+      return true;
+    };
+
+    authWin.webContents.on('will-redirect', (e, url) => {
+      if (tryExtract(url)) e.preventDefault();
+    });
+
+    authWin.webContents.on('will-navigate', (e, url) => {
+      if (tryExtract(url)) e.preventDefault();
+    });
+
+    authWin.webContents.on('did-navigate', (_e, url) => {
+      tryExtract(url);
+    });
+
+    authWin.on('closed', () => {
+      reject(new Error('closed'));
+    });
+  });
+});

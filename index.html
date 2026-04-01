@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VADT — Vex Analysis and Documentation Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --red:#e8302a;--red-d:rgba(232,48,42,0.15);
+  --blue:#1a7ddf;--blue-d:rgba(26,125,223,0.15);
+  --gold:#f5c542;--gold-d:rgba(245,197,66,0.12);
+  --green:#22c55e;--green-d:rgba(34,197,94,0.12);
+  --s0:#08080b;--s1:#0e0e13;--s2:#151519;--s3:#1c1c22;--s4:#24242c;--s5:#2e2e3a;
+  --b1:rgba(255,255,255,0.055);--b2:rgba(255,255,255,0.1);--b3:rgba(255,255,255,0.17);
+  --t1:#eeeef4;--t2:#8888a0;--t3:#48485a;
+  --fd:'Barlow Condensed',sans-serif;--fb:'Barlow',sans-serif;--fm:'JetBrains Mono',monospace;
+  --r:6px;--rl:12px;
+}
+body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;line-height:1.5;min-height:100vh;overflow:hidden;}
+
+/* ─── TOPBAR ─── */
+.topbar{background:var(--s2);border-bottom:1px solid var(--b1);height:50px;display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;}
+.logo{font-family:var(--fd);font-weight:900;font-size:21px;letter-spacing:0.05em;white-space:nowrap;display:flex;align-items:center;gap:5px;}
+.logo em{color:var(--gold);font-style:normal;}
+.logo sub{font-size:9px;font-weight:600;background:var(--gold-d);color:var(--gold);padding:1px 5px;border-radius:3px;font-family:var(--fb);letter-spacing:0.08em;vertical-align:middle;margin-left:1px;}
+.sep{width:1px;height:22px;background:var(--b2);flex-shrink:0;}
+.ev-input{flex:1;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fb);font-size:13px;padding:6px 10px;border-radius:var(--r);outline:none;transition:border-color 0.15s;min-width:0;}
+.ev-input:focus{border-color:var(--gold);}
+.ev-input::placeholder{color:var(--t3);}
+.btn-g{background:var(--gold);color:#1a1200;font-family:var(--fd);font-size:14px;font-weight:700;letter-spacing:0.06em;padding:6px 14px;border:none;border-radius:var(--r);cursor:pointer;transition:opacity 0.15s;white-space:nowrap;flex-shrink:0;}
+.btn-g:hover{opacity:0.87;}
+.btn-g:disabled{opacity:0.35;cursor:default;}
+.btn-o{background:transparent;border:1px solid var(--b2);color:var(--t2);font-family:var(--fb);font-size:12px;padding:5px 10px;border-radius:var(--r);cursor:pointer;transition:all 0.12s;white-space:nowrap;flex-shrink:0;}
+.btn-o:hover{border-color:var(--b3);color:var(--t1);}
+.status-row{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3);white-space:nowrap;margin-left:auto;}
+.sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--t3);}
+.sdot-live{background:var(--green);animation:blink 1.4s ease-in-out infinite;}
+.sdot-load{background:var(--gold);animation:blink 0.7s ease-in-out infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.2;}}
+
+/* ─── LAYOUT ─── */
+.layout{display:grid;grid-template-columns:252px 1fr 280px;height:calc(100vh - 50px);}
+.pl{background:var(--s1);border-right:1px solid var(--b1);display:flex;flex-direction:column;overflow:hidden;}
+.pr{background:var(--s1);border-left:1px solid var(--b1);display:flex;flex-direction:column;overflow:hidden;}
+.ph{padding:10px 12px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.ph-t{font-family:var(--fd);font-weight:700;font-size:11px;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;}
+.scr{overflow-y:auto;flex:1;}
+.scr::-webkit-scrollbar{width:3px;}
+.scr::-webkit-scrollbar-thumb{background:var(--s5);border-radius:3px;}
+
+/* ─── MATCH LIST ─── */
+.mi{padding:9px 10px;margin:3px 5px;border-radius:var(--r);cursor:pointer;border:1px solid transparent;transition:all 0.1s;}
+.mi:hover{background:var(--s3);}
+.mi.active{background:var(--s3);border-color:var(--gold);}
+.mi.scouted{border-left:3px solid var(--green);padding-left:8px;}
+.mi-top{display:flex;align-items:center;gap:4px;margin-bottom:5px;}
+.mi-num{font-family:var(--fd);font-weight:700;font-size:14px;flex:1;}
+.bx{font-size:10px;font-weight:600;padding:1px 6px;border-radius:3px;letter-spacing:0.06em;}
+.b-sc{background:rgba(34,197,94,0.13);color:#22c55e;}
+.b-up{background:var(--s4);color:var(--t3);}
+.b-sk{background:var(--gold-d);color:var(--gold);}
+.mi-teams{display:flex;align-items:center;gap:3px;flex-wrap:wrap;}
+.tt{font-family:var(--fm);font-size:10px;font-weight:600;padding:2px 5px;border-radius:3px;}
+.tt-r{background:var(--red-d);color:#ff7b77;}
+.tt-b{background:var(--blue-d);color:#6ab3ff;}
+.vs{color:var(--t3);font-size:10px;}
+.mi-sc{font-family:var(--fd);font-weight:700;font-size:12px;color:var(--t2);margin-top:3px;}
+
+/* ─── CENTER ─── */
+.pc{display:flex;flex-direction:column;overflow:hidden;background:var(--s0);}
+.vid-panel{flex-shrink:0;display:flex;flex-direction:column;background:var(--s1);border-bottom:1px solid var(--b1);}
+.vid-input-bar{display:flex;align-items:center;gap:7px;padding:8px 11px;background:var(--s2);border-bottom:1px solid var(--b1);flex-shrink:0;}
+.vid-dl-bar{display:flex;align-items:center;gap:7px;padding:6px 11px;background:var(--s1);border-bottom:1px solid var(--b1);flex-shrink:0;}
+.dl-time{font-size:11px;color:var(--gold);font-family:var(--fm);min-width:52px;}input.dl-time{background:transparent;border:none;border-bottom:1px solid var(--b2);outline:none;padding:0 2px;width:52px;cursor:text;}input.dl-time:focus{border-bottom-color:var(--gold);}
+.dl-progress{flex:1;height:3px;background:var(--s4);border-radius:2px;overflow:hidden;display:none;}
+.dl-progress-bar{height:100%;background:var(--gold);width:0%;transition:width 0.3s;}
+.vi{flex:1;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fb);font-size:13px;padding:5px 9px;border-radius:var(--r);outline:none;min-width:0;}
+.vi:focus{border-color:var(--gold);}
+.vi::placeholder{color:var(--t3);}
+.vid-embed-wrap{position:relative;width:100%;height:240px;background:#000;flex-shrink:0;overflow:hidden;transition:height 0.2s ease;}
+.vid-embed-wrap.collapsed{height:0;}
+.vid-resize-handle{height:5px;background:var(--s4);cursor:ns-resize;flex-shrink:0;transition:background 0.12s;}
+.vid-resize-handle:hover{background:var(--gold);}
+.vid-placeholder,.vid-blocked{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;color:var(--t3);font-size:12px;text-align:center;padding:16px;}
+
+/* ─── SCOUT AREA ─── */
+.sa{flex:1;overflow-y:auto;padding:12px;}
+.sa::-webkit-scrollbar{width:3px;}
+.sa::-webkit-scrollbar-thumb{background:var(--s5);border-radius:3px;}
+.mb{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:12px 14px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;}
+.mb-s{display:flex;flex-direction:column;gap:2px;}
+.mb-s.rt{align-items:flex-end;}
+.mb-tn{font-family:var(--fd);font-weight:900;font-size:19px;line-height:1;}
+.mb-tn.r{color:#ff6b65;}.mb-tn.b{color:#6ab3ff;}
+.mb-org{font-size:11px;color:var(--t2);}
+.mb-mid{text-align:center;}
+.mb-lbl{font-family:var(--fd);font-size:11px;letter-spacing:0.12em;color:var(--t3);text-transform:uppercase;}
+.mb-sc{font-family:var(--fd);font-weight:900;font-size:28px;line-height:1.1;}
+.pw{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:11px 13px;margin-bottom:10px;}
+.ph2{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
+.pl2{font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.11em;color:var(--t3);text-transform:uppercase;}
+.pn{display:flex;justify-content:space-between;margin-bottom:4px;}
+.pr2{font-family:var(--fd);font-size:17px;font-weight:900;color:#ff6b65;}
+.pb2{font-family:var(--fd);font-size:17px;font-weight:900;color:#6ab3ff;}
+.pt{height:6px;background:var(--s4);border-radius:3px;overflow:hidden;}
+.pf{height:100%;border-radius:3px;transition:width 0.5s ease;}
+.tr{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:8px;margin-bottom:10px;}
+.tc{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:10px 12px;border-top:3px solid transparent;}
+.tc.red{border-top-color:var(--red);}.tc.blue{border-top-color:var(--blue);}
+.tc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;}
+.tc-n{font-family:var(--fd);font-weight:900;font-size:18px;line-height:1;}
+.tc-n.red{color:#ff6b65;}.tc-n.blue{color:#6ab3ff;}
+.tc-o{font-size:11px;color:var(--t2);margin-top:1px;}
+.rkb{background:var(--gold-d);color:var(--gold);font-family:var(--fm);font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;}
+.tc-st{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.st{background:var(--s3);border-radius:var(--r);padding:4px 7px;}
+.stl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:1px;}
+.stv{font-family:var(--fm);font-size:12px;font-weight:600;}
+.sf{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:12px 14px;margin-bottom:10px;}
+.sf-t{font-family:var(--fd);font-weight:700;font-size:12px;letter-spacing:0.08em;color:var(--t2);text-transform:uppercase;margin-bottom:10px;}
+.sr{display:grid;grid-template-columns:165px 1fr;align-items:center;gap:8px;margin-bottom:8px;}
+.sl{font-size:13px;color:var(--t1);}
+.ss{font-size:11px;color:var(--t3);}
+.stars{display:flex;gap:3px;}
+.star{font-size:18px;cursor:pointer;color:var(--s5);transition:color 0.08s;user-select:none;line-height:1;}
+.star.on{color:var(--gold);}
+.sels{background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fb);font-size:13px;padding:5px 8px;border-radius:var(--r);outline:none;width:100%;}
+.txta{width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fb);font-size:13px;padding:7px 9px;border-radius:var(--r);outline:none;resize:vertical;min-height:56px;transition:border-color 0.15s;}
+.txta:focus{border-color:var(--gold);}
+.txta::placeholder{color:var(--t3);}
+.cb{width:15px;height:15px;accent-color:var(--gold);cursor:pointer;}
+.mr{display:flex;align-items:center;gap:8px;}
+.mrn{font-family:var(--fd);font-size:24px;font-weight:900;color:var(--gold);min-width:30px;}
+input[type=range]{width:100%;accent-color:var(--gold);}
+.fa{display:flex;gap:7px;margin-top:11px;padding-top:10px;border-top:1px solid var(--b1);}
+
+/* ─── RIGHT PANEL ─── */
+.ev-hd{padding:11px 12px;border-bottom:1px solid var(--b1);flex-shrink:0;}
+.ev-nm{font-family:var(--fd);font-weight:700;font-size:15px;line-height:1.2;margin-bottom:2px;}
+.ev-mt{font-size:11px;color:var(--t3);}
+.rr{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--r);transition:background 0.08s;}
+.rr:hover{background:var(--s3);}
+.rr.hl{background:rgba(245,197,66,0.05);border-left:2px solid var(--gold);padding-left:7px;}
+.rn{font-family:var(--fm);font-size:11px;color:var(--t3);text-align:right;}
+.rt2{font-family:var(--fm);font-size:12px;font-weight:600;}
+.rw{font-size:11px;color:var(--t2);}
+.ex{padding:9px 11px;border-top:1px solid var(--b1);flex-shrink:0;}
+.ex h4{font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;}
+.xb{display:flex;align-items:center;gap:7px;width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fb);font-size:12px;padding:7px 10px;border-radius:var(--r);cursor:pointer;transition:all 0.12s;margin-bottom:5px;text-align:left;}
+.xb:hover{background:var(--s4);border-color:var(--b3);}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:34px 14px;color:var(--t3);font-size:13px;text-align:center;}
+.nt{background:var(--gold-d);border:1px solid rgba(245,197,66,0.18);border-radius:var(--rl);padding:9px 12px;font-size:12px;color:var(--gold);line-height:1.6;margin-bottom:10px;}
+
+/* ─── VIDEO OVERLAY HUD ─── */
+.vo-hud{position:absolute;top:0;left:0;right:0;pointer-events:none;z-index:15;display:flex;align-items:stretch;background:linear-gradient(to bottom,rgba(0,0,0,0.82) 0%,rgba(0,0,0,0.3) 70%,transparent 100%);}
+.vo-hud-red{flex:1;padding:6px 12px;display:flex;flex-direction:column;justify-content:center;}
+.vo-hud-blue{flex:1;padding:6px 12px;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;}
+.vo-hud-mid{padding:5px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;}
+.vo-hud-score{font-family:var(--fd);font-weight:900;font-size:30px;line-height:1;display:flex;align-items:center;gap:9px;}
+.vo-hud-score .r{color:#ff6b65;}.vo-hud-score .b{color:#6ab3ff;}
+.vo-hud-score .sep{color:rgba(255,255,255,0.3);font-size:20px;}
+.vo-hud-team{font-family:var(--fd);font-size:12px;font-weight:700;line-height:1.2;}
+.vo-hud-team.r{color:#ff9d9a;}.vo-hud-team.b{color:#90c4ff;}
+.vo-hud-org{font-size:10px;color:rgba(255,255,255,0.45);margin-top:1px;}
+.vo-hud-period{font-size:9px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;padding:1px 6px;border-radius:3px;margin-bottom:2px;}
+.vo-hud-period.auton{background:rgba(34,197,94,0.35);color:#6ee7a0;}
+.vo-hud-period.driver{background:rgba(245,197,66,0.25);color:var(--gold);}
+.vo-hud-timer{font-family:var(--fd);font-weight:900;font-size:22px;color:#fff;line-height:1;}
+.vo-hud-timer.auton{color:#6ee7a0;}
+.vo-hud-timer.overtime{color:#ff7b77;animation:blink 0.5s step-start infinite;}
+.vo-toolbar{position:absolute;bottom:0;left:0;right:0;pointer-events:all;z-index:15;background:linear-gradient(to top,rgba(0,0,0,0.85),transparent);padding:8px 10px 6px;display:flex;align-items:center;gap:6px;opacity:0;transition:opacity 0.2s;}
+.vid-embed-wrap:hover .vo-toolbar,.vid-embed-wrap.overlay-pinned .vo-toolbar{opacity:1;}
+.vo-ann-btn{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);color:#fff;font-size:11px;font-family:var(--fb);padding:4px 8px;border-radius:5px;cursor:pointer;transition:all 0.12s;white-space:nowrap;flex-shrink:0;}
+.vo-ann-btn:hover{background:rgba(255,255,255,0.22);}
+.vo-ann-btn .kbd{font-size:9px;background:rgba(0,0,0,0.4);padding:1px 4px;border-radius:3px;margin-left:2px;font-family:var(--fm);}
+.vo-ann-btn.ann-red{border-color:rgba(232,48,42,0.6);background:rgba(232,48,42,0.2);}
+.vo-ann-btn.ann-red:hover{background:rgba(232,48,42,0.4);}
+.vo-ann-btn.ann-blue{border-color:rgba(26,125,223,0.6);background:rgba(26,125,223,0.2);}
+.vo-ann-btn.ann-blue:hover{background:rgba(26,125,223,0.4);}
+.vo-ann-btn.ann-gold{border-color:rgba(245,197,66,0.6);background:rgba(245,197,66,0.15);}
+.vo-ann-btn.ann-gold:hover{background:rgba(245,197,66,0.3);}
+.vo-ann-btn.ann-green{border-color:rgba(34,197,94,0.6);background:rgba(34,197,94,0.15);}
+.vo-ann-btn.ann-green:hover{background:rgba(34,197,94,0.3);}
+.vo-toolbar-sep{width:1px;height:18px;background:rgba(255,255,255,0.15);flex-shrink:0;}
+.vo-timer-row{display:flex;align-items:center;gap:7px;padding:5px 10px;background:var(--s2);border-top:1px solid var(--b1);pointer-events:all;}
+.vo-timer-row label{font-size:11px;color:var(--t3);white-space:nowrap;}
+.so-input{width:52px;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fd);font-size:18px;font-weight:700;padding:3px 6px;border-radius:var(--r);outline:none;text-align:center;}
+.so-input:focus{border-color:var(--gold);}
+.vo-timer-btn{background:var(--s3);border:1px solid var(--b2);color:var(--t2);font-size:12px;padding:4px 9px;border-radius:var(--r);cursor:pointer;transition:all 0.12s;font-family:var(--fb);}
+.vo-timer-btn:hover{background:var(--s4);color:var(--t1);}
+.vo-timer-btn.active{background:rgba(34,197,94,0.15);border-color:rgba(34,197,94,0.4);color:#22c55e;}
+.vo-timeline{padding:0 10px 6px;background:var(--s1);border-top:1px solid var(--b1);min-height:32px;position:relative;overflow:hidden;}
+.vo-tl-inner{position:relative;height:28px;width:100%;}
+.vo-tl-bar{position:absolute;top:12px;left:0;right:0;height:3px;background:var(--s4);border-radius:2px;}
+.vo-tl-progress{position:absolute;top:12px;left:0;height:3px;background:var(--gold);border-radius:2px;transition:width 0.5s linear;pointer-events:none;}
+.vo-tl-auton-zone{position:absolute;top:10px;left:0;height:7px;background:rgba(34,197,94,0.18);border-right:1px dashed rgba(34,197,94,0.4);border-radius:2px 0 0 2px;}
+.vo-tl-marker{position:absolute;top:4px;width:16px;height:16px;border-radius:50%;border:2px solid rgba(0,0,0,0.5);cursor:pointer;transform:translateX(-8px);transition:transform 0.08s;z-index:2;display:flex;align-items:center;justify-content:center;font-size:8px;}
+.vo-tl-marker:hover{transform:translateX(-8px) scale(1.4);z-index:3;}
+.vo-tl-tick{position:absolute;top:8px;width:1px;height:11px;background:rgba(255,255,255,0.1);}
+.vo-tl-tick-lbl{position:absolute;top:22px;font-size:8px;color:var(--t3);transform:translateX(-50%);white-space:nowrap;}
+.vo-ann-log{display:flex;gap:6px;flex:1;overflow-x:auto;align-items:center;padding-right:4px;}
+.vo-ann-log::-webkit-scrollbar{height:2px;}
+.vo-ann-log::-webkit-scrollbar-thumb{background:var(--s5);}
+.vo-ann-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:10px;white-space:nowrap;cursor:pointer;flex-shrink:0;border:1px solid transparent;}
+.vo-ann-chip:hover{filter:brightness(1.2);}
+.vo-ann-chip .chip-t{font-family:var(--fm);font-size:10px;opacity:0.7;margin-left:2px;}
+.vo-tooltip{position:absolute;bottom:26px;background:rgba(10,10,16,0.95);border:1px solid var(--b2);border-radius:6px;padding:5px 9px;font-size:11px;color:var(--t1);pointer-events:none;z-index:20;white-space:nowrap;transform:translateX(-50%);display:none;}
+.vo-tooltip.show{display:block;}
+
+/* ─── TEAM ANALYSIS PAGE ─── */
+#teamPage{position:fixed;inset:0;background:var(--s0);z-index:150;display:none;flex-direction:column;overflow:hidden;}
+#teamPage.open{display:flex;}
+.tp-topbar{background:var(--s2);border-bottom:1px solid var(--b1);height:50px;display:flex;align-items:center;padding:0 20px;gap:14px;flex-shrink:0;}
+.tp-back{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid var(--b2);color:var(--t2);font-family:var(--fb);font-size:13px;padding:5px 12px;border-radius:var(--r);cursor:pointer;transition:all 0.12s;}
+.tp-back:hover{border-color:var(--b3);color:var(--t1);}
+.tp-team-num{font-family:var(--fd);font-weight:900;font-size:24px;letter-spacing:0.04em;}
+.tp-team-org{font-size:13px;color:var(--t2);}
+.tp-body{display:grid;grid-template-columns:1fr 340px;flex:1;overflow:hidden;}
+.tp-main{overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;}
+.tp-main::-webkit-scrollbar{width:3px;}
+.tp-main::-webkit-scrollbar-thumb{background:var(--s5);border-radius:3px;}
+.tp-side{background:var(--s1);border-left:1px solid var(--b1);overflow-y:auto;padding:16px;}
+.tp-side::-webkit-scrollbar{width:3px;}
+.tp-side::-webkit-scrollbar-thumb{background:var(--s5);border-radius:3px;}
+.tp-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.tp-stat{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:13px 14px;}
+.tp-stat-lbl{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;}
+.tp-stat-val{font-family:var(--fd);font-weight:900;font-size:26px;line-height:1;}
+.tp-stat-sub{font-size:11px;color:var(--t2);margin-top:3px;}
+.tp-card{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:14px 16px;}
+.tp-card-title{font-family:var(--fd);font-weight:700;font-size:12px;letter-spacing:0.1em;color:var(--t2);text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;}
+.tp-chart-wrap{position:relative;height:180px;}
+.momentum-row{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px;}
+.mom-block{width:22px;height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:var(--fd);}
+.mom-w{background:rgba(34,197,94,0.2);color:#22c55e;}
+.mom-l{background:rgba(232,48,42,0.2);color:#ff7b77;}
+.mom-t{background:var(--s4);color:var(--t3);}
+.tp-match-row{display:grid;grid-template-columns:50px 1fr 80px 80px;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r);border:1px solid transparent;transition:all 0.1s;margin-bottom:3px;}
+.tp-match-row:hover{background:var(--s3);border-color:var(--b1);}
+.tp-match-lbl{font-family:var(--fd);font-weight:700;font-size:13px;}
+.tp-match-teams{font-size:12px;color:var(--t2);}
+.tp-match-score{font-family:var(--fd);font-weight:700;font-size:14px;text-align:right;}
+.tp-match-result{font-size:11px;font-weight:600;padding:2px 7px;border-radius:3px;text-align:center;}
+.res-w{background:rgba(34,197,94,0.13);color:#22c55e;}
+.res-l{background:rgba(232,48,42,0.13);color:#ff7b77;}
+.res-t{background:var(--s4);color:var(--t3);}
+.tp-tabs{display:flex;gap:0;border-bottom:1px solid var(--b1);background:var(--s2);flex-shrink:0;padding:0 20px;}
+.tp-tab{font-family:var(--fd);font-weight:700;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;padding:12px 18px;cursor:pointer;color:var(--t3);border-bottom:2px solid transparent;transition:all 0.15s;background:none;border-top:none;border-left:none;border-right:none;}
+.tp-tab:hover{color:var(--t2);}
+.tp-tab.active{color:var(--gold);border-bottom-color:var(--gold);}
+.tp-tab-badge{background:var(--s4);color:var(--t3);font-size:10px;font-family:var(--fb);font-weight:600;padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle;}
+.tp-tab.active .tp-tab-badge{background:var(--gold-d);color:var(--gold);}
+@keyframes skelPulse{0%,100%{opacity:0.5;}50%{opacity:1;}}
+.season-event-row{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);padding:11px 14px;margin-bottom:8px;}
+.season-event-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.season-event-name{font-size:13px;font-weight:500;color:var(--t1);}
+.season-event-place{font-family:var(--fd);font-weight:900;font-size:18px;}
+.season-event-place.gold{color:var(--gold);}
+.season-event-place.silver{color:#aab4c0;}
+.season-event-place.bronze{color:#cd7f32;}
+.season-event-place.other{color:var(--t2);}
+.season-event-stats{display:flex;gap:12px;font-size:12px;color:var(--t2);}
+.season-skills-bar{height:6px;background:var(--s4);border-radius:3px;overflow:hidden;margin-top:6px;}
+.season-skills-fill{height:100%;border-radius:3px;background:var(--gold);}
+
+/* ─── CV OVERLAY ─── */
+#cvOverlayPanel{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:400;display:none;flex-direction:column;align-items:center;justify-content:flex-start;padding:20px;overflow-y:auto;}
+#cvOverlayPanel.open{display:flex;}
+.cvo-box{background:var(--s2);border:1px solid var(--b2);border-radius:14px;width:860px;max-width:98vw;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,0.7);}
+.cvo-hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--b1);background:var(--s1);}
+.cvo-title{font-family:var(--fd);font-weight:900;font-size:20px;flex:1;}
+.cvo-step-bar{display:flex;gap:5px;}
+.cvo-step-pip{background:var(--s4);color:var(--t3);padding:2px 9px;border-radius:3px;font-family:var(--fm);font-size:11px;}
+.cvo-step-pip.active{background:var(--gold-d);color:var(--gold);}
+.cvo-body{padding:16px 18px;}
+.cvo-canvas-wrap{position:relative;width:100%;background:#000;border-radius:8px;overflow:hidden;cursor:crosshair;}
+#cvoCanvas{display:block;width:100%;height:auto;}
+#cvoDrawCanvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;}
+.cvo-zones{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;}
+.cvo-zone{background:var(--s3);border:1px solid var(--b2);border-radius:var(--rl);padding:10px 12px;cursor:pointer;transition:border-color 0.1s;}
+.cvo-zone-hd{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+.cvo-zone-color{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+.cvo-zone-name{font-family:var(--fd);font-weight:700;font-size:13px;}
+.cvo-zone-status{font-size:11px;color:var(--t3);}
+.cvo-zone-val{font-family:var(--fm);font-size:22px;font-weight:700;color:var(--gold);margin-top:2px;}
+.cvo-zone.drawn{border-color:rgba(34,197,94,0.4);}
+.cvo-zone.drawn .cvo-zone-status{color:#22c55e;}
+.cvo-live{background:var(--s1);border-top:1px solid var(--b1);padding:12px 18px;display:flex;align-items:center;gap:16px;}
+.cvo-live-score{font-family:var(--fd);font-weight:900;font-size:32px;}
+.cvo-live-score .r{color:#ff6b65;}
+.cvo-live-score .sep{color:var(--t3);margin:0 6px;}
+.cvo-live-score .b{color:#6ab3ff;}
+.cvo-instr{background:var(--gold-d);border:1px solid rgba(245,197,66,0.2);border-radius:var(--r);padding:9px 12px;font-size:12px;color:var(--gold);line-height:1.6;margin-bottom:10px;}
+
+/* ─── SETTINGS MODAL ─── */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:300;display:none;align-items:center;justify-content:center;}
+.modal-backdrop.open{display:flex;}
+.modal-box{background:var(--s2);border:1px solid var(--b2);border-radius:14px;width:460px;max-width:95vw;padding:26px 28px;box-shadow:0 20px 50px rgba(0,0,0,0.5);}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo">VA<em>DT</em><sub> 1.0.1</sub></div>
+  <div class="sep"></div>
+  <input class="ev-input" id="evIn" placeholder="Paste your RobotEvents event URL — e.g. robotevents.com/…/RE-VRC-25-1234.html"/>
+  <button class="btn-g" id="ldBtn" onclick="loadEvent()">Load Event</button>
+  <button class="btn-o" onclick="openSettings()">Settings</button>
+  <button class="btn-o" onclick="openNotebook()">Notebook</button>
+  <div style="display:flex;align-items:center;gap:7px;margin-left:4px;" id="authArea"><span style="font-size:12px;color:var(--t3);">Loading…</span></div>
+  <div class="status-row"><div class="sdot" id="sd"></div><span id="stxt">No event loaded</span></div>
+</div>
+
+<!-- MAIN LAYOUT -->
+<div class="layout">
+
+  <!-- LEFT: MATCH LIST -->
+  <div class="pl">
+    <div class="ph"><span class="ph-t">Matches</span><button class="btn-o" style="font-size:11px;padding:3px 8px;" onclick="refreshMatches()">↻</button></div>
+    <div class="scr" id="mList"><div class="empty">Load an event above to see matches</div></div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="pc">
+    <div class="vid-panel" id="vidPanel">
+      <div class="vid-input-bar">
+        <input class="vi" id="vUrl" placeholder="Paste a YouTube or Twitch URL to watch inline…"/>
+        <button class="btn-o" onclick="loadVid()">Load ▶</button>
+        <div class="sep" style="height:18px;"></div>
+        <label style="font-size:11px;color:var(--t3);white-space:nowrap;">Match #</label>
+        <input id="matchJumpInput" type="text" placeholder="e.g. Q3" title="Jump to match"
+          style="width:60px;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fm);font-size:12px;padding:4px 7px;border-radius:var(--r);outline:none;"
+          oninput="jumpToMatch(this.value)"/>
+        <button class="btn-o" onclick="openCVOverlay()" title="Video score detection">Detect</button>
+        <button class="btn-o" id="vidToggle" onclick="toggleVid()" style="padding:4px 9px;" title="Hide/show video">⌃</button>
+      </div>
+
+      <!-- ELECTRON-ONLY CLIP DOWNLOAD BAR — hidden in web version -->
+      <div class="vid-dl-bar" id="vidDlBar" style="display:none;">
+        <span style="font-size:11px;color:var(--t3);white-space:nowrap;">Clip:</span>
+        <button class="btn-o" onclick="markClipStart()" title="Set clip start to current playback position">⬥ Start</button>
+        <input class="dl-time" id="dlStartLabel" placeholder="—" title="Click ⬥ Start or type time manually (e.g. 1:23)" oninput="parseManualTime('start',this.value)">
+        <button class="btn-o" onclick="markClipEnd()" title="Set clip end to current playback position">⬥ End</button>
+        <input class="dl-time" id="dlEndLabel" placeholder="—" title="Click ⬥ End or type time manually (e.g. 2:45)" oninput="parseManualTime('end',this.value)">
+        <button class="btn-g" id="dlBtn" onclick="triggerClipDownload()" disabled style="font-size:12px;padding:5px 12px;">Download &amp; Analyze</button>
+        <div class="dl-progress" id="dlProgress"><div class="dl-progress-bar" id="dlProgressBar"></div></div>
+        <span id="dlStatus" style="font-size:11px;color:var(--t2);white-space:nowrap;"></span>
+      </div>
+
+      <div style="position:relative;flex-shrink:0;">
+        <div class="vid-embed-wrap" id="vidWrap">
+          <div class="vid-placeholder" id="vidPlaceholder">
+            <div style="font-size:28px;opacity:0.2;">▶</div>
+            <span>Paste a stream or VOD URL above and click Load</span>
+          </div>
+          <iframe id="vidFrame" style="display:none;width:100%;height:100%;border:none;" allow="autoplay;fullscreen" allowfullscreen></iframe>
+          <div class="vid-blocked" id="vidBlocked" style="display:none;">
+            <div style="font-size:22px;opacity:0.3;">⛔</div>
+            <span>This video can't be embedded.</span>
+            <a id="vidExtLink" href="#" target="_blank" class="btn-o" style="margin-top:8px;font-size:12px;">Open in YouTube ↗</a>
+          </div>
+          <!-- HUD -->
+          <div class="vo-hud" id="voHud" style="display:none;">
+            <div class="vo-hud-red">
+              <div class="vo-hud-team r" id="voRedTeams">—</div>
+              <div class="vo-hud-org" id="voRedOrg"></div>
+            </div>
+            <div class="vo-hud-mid">
+              <div class="vo-hud-period auton" id="voPeriodBadge">AUTON</div>
+              <div class="vo-hud-score">
+                <span class="r" id="voRedScore">0</span><span class="sep">:</span><span class="b" id="voBlueScore">0</span>
+              </div>
+              <div class="vo-hud-timer" id="voTimer">0:15</div>
+            </div>
+            <div class="vo-hud-blue">
+              <div class="vo-hud-team b" id="voBlueTeams">—</div>
+              <div class="vo-hud-org" id="voBlueOrg"></div>
+            </div>
+          </div>
+          <!-- ANNOTATION TOOLBAR -->
+          <div class="vo-toolbar" id="voToolbar" style="display:none;">
+            <button class="vo-ann-btn ann-green" onclick="dropAnnotation('auton_start')">🟢 Auton Start<span class="kbd">A</span></button>
+            <button class="vo-ann-btn ann-gold"  onclick="dropAnnotation('score')">💛 Score<span class="kbd">S</span></button>
+            <button class="vo-ann-btn ann-red"   onclick="dropAnnotation('defense')">🔴 Defense<span class="kbd">D</span></button>
+            <button class="vo-ann-btn ann-blue"  onclick="dropAnnotation('alliance')">🔵 Alliance<span class="kbd">L</span></button>
+            <button class="vo-ann-btn"           onclick="dropAnnotation('error')">⚠️ Error<span class="kbd">E</span></button>
+            <button class="vo-ann-btn"           onclick="dropAnnotation('note')">📝 Note<span class="kbd">N</span></button>
+            <div class="vo-toolbar-sep"></div>
+            <button class="vo-ann-btn" onclick="clearAnnotations()" style="color:#ff9d9a;border-color:rgba(255,80,80,0.3);">✕ Clear</button>
+          </div>
+        </div>
+
+        <!-- TIMER ROW -->
+        <div class="vo-timer-row" id="voTimerRow" style="display:none;">
+          <label>🔴</label>
+          <input class="so-input" id="inRedScore" type="number" min="0" max="999" value="0" oninput="updateOverlayScore()"/>
+          <label style="margin-left:4px;">🔵</label>
+          <input class="so-input" id="inBlueScore" type="number" min="0" max="999" value="0" oninput="updateOverlayScore()"/>
+          <div style="width:1px;height:20px;background:var(--b2);margin:0 4px;flex-shrink:0;"></div>
+          <button class="vo-timer-btn" id="voStartBtn" onclick="toggleMatchTimer()">▶ Start Timer</button>
+          <button class="vo-timer-btn" onclick="syncTimer(15)">→ 0:15</button>
+          <button class="vo-timer-btn" onclick="syncTimer(0)">↺ Reset</button>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:5px;">
+            <span style="font-size:10px;color:var(--t3);">Annotations:</span>
+            <div class="vo-ann-log" id="voAnnLog"></div>
+          </div>
+        </div>
+
+        <!-- TIMELINE -->
+        <div class="vo-timeline" id="voTimeline" style="display:none;">
+          <div class="vo-tl-inner" id="voTlInner">
+            <div class="vo-tl-bar"></div>
+            <div class="vo-tl-auton-zone" id="voAutonZone"></div>
+            <div class="vo-tl-progress" id="voTlProgress" style="width:0%;"></div>
+            <div id="voTlMarkers"></div>
+          </div>
+          <div class="vo-tooltip" id="voTooltip"></div>
+        </div>
+      </div>
+      <div class="vid-resize-handle" id="vidResizeHandle"></div>
+    </div>
+
+    <div class="sa" id="sArea">
+      <div class="empty" style="margin-top:50px;">
+        <div style="font-size:34px;opacity:0.22;">🏆</div>
+        <p>Select a match from the left to begin scouting</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: RANKINGS -->
+  <div class="pr">
+    <div class="ev-hd"><div class="ev-nm" id="evNm">No event loaded</div><div class="ev-mt" id="evMt">—</div></div>
+    <div class="ph"><span class="ph-t">Event Rankings</span></div>
+    <div class="scr" id="rkList"><div class="empty" style="padding:14px;">—</div></div>
+    <div class="ex">
+      <h4>Export Scouting Data</h4>
+      <button class="xb" onclick="exportXLSX()">Download .xlsx</button>
+      <button class="xb" onclick="exportSheets()">Sync to Google Sheets</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── TEAM ANALYSIS PAGE ─── -->
+<div id="teamPage">
+  <div class="tp-topbar">
+    <button class="tp-back" onclick="closeTeamPage()">← Back</button>
+    <div class="sep"></div>
+    <div class="tp-team-num" id="tpTeamNum">—</div>
+    <div class="tp-team-org" id="tpTeamOrg"></div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+      <button class="btn-o" onclick="document.getElementById('cvImportInput').click()">📥 Import CV Data</button>
+      <input type="file" id="cvImportInput" accept=".json" style="display:none;" onchange="importCVData(event)"/>
+      <button class="btn-o" onclick="exportTeamData()">Export ↓</button>
+    </div>
+  </div>
+  <div class="tp-tabs">
+    <button class="tp-tab active" id="tabEvent" onclick="switchTab('event')">Event Stats<span class="tp-tab-badge" id="tabEventBadge">—</span></button>
+    <button class="tp-tab" id="tabSeason" onclick="switchTab('season')">Season Stats<span class="tp-tab-badge" id="tabSeasonBadge">—</span></button>
+  </div>
+  <div class="tp-body" id="tpEventTab">
+    <div class="tp-main" id="tpMain"><div class="empty" style="margin-top:60px;"><p>Loading…</p></div></div>
+    <div class="tp-side" id="tpSide"><div class="empty"><p>—</p></div></div>
+  </div>
+  <div class="tp-body" id="tpSeasonTab" style="display:none;">
+    <div class="tp-main" id="tpSeasonMain"><div class="empty" style="margin-top:60px;"><p>Click Season Stats to load…</p></div></div>
+    <div class="tp-side" id="tpSeasonSide"><div class="empty"><p>—</p></div></div>
+  </div>
+</div>
+
+<!-- ─── CV SCORE DETECTION OVERLAY ─── -->
+<div id="cvOverlayPanel">
+  <div class="cvo-box">
+    <div class="cvo-hd">
+      <div class="cvo-title">🎯 Video Score Detection</div>
+      <div class="cvo-step-bar">
+        <span class="cvo-step-pip active" id="cvStep1">1 Capture</span>
+        <span class="cvo-step-pip" id="cvStep2">2 Draw Zones</span>
+        <span class="cvo-step-pip" id="cvStep3">3 Live Detect</span>
+      </div>
+      <button class="btn-o" style="margin-left:10px;" onclick="closeCVOverlay()">✕ Close</button>
+    </div>
+    <div class="cvo-body">
+      <div id="cvStepCapture">
+        <div class="cvo-instr">📹 Load a local video file, pause it at the desired frame, then click <strong>Capture Frame</strong>. Or upload a screenshot directly.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <label class="btn-o" style="cursor:pointer;">🎬 Load Video File<input type="file" accept="video/*" style="display:none;" onchange="loadCVVideo(event)"/></label>
+          <button class="btn-g" onclick="captureFrame()">📸 Capture Frame</button>
+          <span style="font-size:12px;color:var(--t3);">or</span>
+          <label class="btn-o" style="cursor:pointer;">Upload Screenshot<input type="file" accept="image/*" style="display:none;" onchange="loadScreenshot(event)"/></label>
+        </div>
+        <video id="cvVideoPreview" style="display:none;max-width:100%;max-height:220px;border-radius:6px;background:#000;margin-bottom:6px;" controls></video>
+        <div id="cvNoVideoMsg" style="font-size:12px;color:var(--gold);display:none;margin-top:6px;"></div>
+      </div>
+      <div id="cvStepDraw" style="display:none;">
+        <div class="cvo-instr"><strong>Click and drag</strong> to draw each zone. Active zone: <strong id="cvCurrentZoneName" style="color:var(--gold);">Red Goal Zone</strong></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;" id="cvZoneBtns"></div>
+        <div class="cvo-canvas-wrap" id="cvCanvasWrap">
+          <canvas id="cvoCanvas"></canvas>
+          <canvas id="cvoDrawCanvas" onmousedown="cvStartDraw(event)" onmousemove="cvMoveDraw(event)" onmouseup="cvEndDraw(event)"></canvas>
+        </div>
+        <div class="cvo-zones" id="cvZoneList"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <button class="btn-g" onclick="startDetection()">▶ Start Detection</button>
+          <button class="btn-o" onclick="resetZones()">↺ Reset</button>
+          <button class="btn-o" onclick="saveCVZones()">💾 Save Zones</button>
+        </div>
+      </div>
+      <div id="cvStepLive" style="display:none;">
+        <div class="cvo-canvas-wrap" style="margin-bottom:10px;">
+          <canvas id="cvoLiveCanvas" style="display:block;width:100%;height:auto;"></canvas>
+        </div>
+        <div class="cvo-zones" id="cvLiveZones"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn-o" onclick="stopDetection()">⏹ Stop</button>
+          <button class="btn-o" onclick="showCVStep('draw')">✏️ Edit Zones</button>
+          <button class="btn-g" onclick="pushDetectedScores()">📥 Push to Scoreboard</button>
+        </div>
+      </div>
+    </div>
+    <div class="cvo-live" id="cvLiveBar" style="display:none;">
+      <div class="cvo-live-score"><span class="r" id="cvLiveRed">0</span><span class="sep">:</span><span class="b" id="cvLiveBlue">0</span></div>
+      <div>
+        <div style="font-size:12px;color:var(--t2);" id="cvLiveStatus">Detecting…</div>
+        <div style="font-family:var(--fm);font-size:11px;color:var(--t3);" id="cvLiveFPS">— fps</div>
+      </div>
+      <div style="margin-left:auto;font-size:11px;color:var(--t3);">Auton: <strong id="cvAutonWinner" style="color:var(--gold);">TBD</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── SETTINGS MODAL ─── -->
+<div class="modal-backdrop" id="settingsModal">
+  <div class="modal-box">
+    <div style="font-family:var(--fd);font-weight:900;font-size:22px;margin-bottom:4px;">⚙ Settings</div>
+    <div style="font-size:12px;color:var(--t3);margin-bottom:20px;">Keys stored in your browser only.</div>
+    <div style="margin-bottom:16px;">
+      <label style="font-size:12px;color:var(--t2);display:block;margin-bottom:5px;">RobotEvents API Token <a href="https://www.robotevents.com/api/v2" target="_blank" style="color:var(--gold);margin-left:6px;">Get token →</a></label>
+      <input id="settingsReToken" type="password" placeholder="eyJhbGciO…"
+        style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-family:var(--fm);font-size:13px;padding:9px 11px;border-radius:var(--r);outline:none;margin-bottom:4px;"
+        oninput="this.style.borderColor=this.value.length>20?'var(--green)':'var(--b2)'"/>
+      <div id="settingsReStatus" style="font-size:11px;color:var(--t3);">Stored in your browser only.</div>
+    </div>
+    <div style="margin-bottom:20px;">
+      <label style="font-size:12px;color:var(--t2);display:block;margin-bottom:5px;">Google Account</label>
+      <div id="settingsGoogleStatus" style="background:var(--s3);border:1px solid var(--b1);border-radius:var(--r);padding:8px 11px;font-size:13px;color:var(--t2);">Not signed in</div>
+    </div>
+    <div style="display:flex;gap:9px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--b1);">
+      <button onclick="closeSettings()" style="background:transparent;border:1px solid var(--b2);color:var(--t2);font-family:var(--fb);font-size:13px;padding:7px 16px;border-radius:var(--r);cursor:pointer;">Cancel</button>
+      <button onclick="saveSettings()" style="background:var(--gold);color:#1a1200;font-family:var(--fd);font-size:14px;font-weight:700;letter-spacing:0.06em;padding:7px 20px;border:none;border-radius:var(--r);cursor:pointer;">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── NOTEBOOK PAGE ─── -->
+<div id="notebookPage" style="position:fixed;inset:0;background:var(--s0);z-index:150;display:none;flex-direction:column;overflow:hidden;">
+  <iframe id="notebookFrame" style="flex:1;width:100%;border:none;" allowfullscreen></iframe>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
