@@ -38,6 +38,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-status', (_event, msg) => callback(msg)),
 
   // ── Utilities ─────────────────────────────────────────────────────────────
+
+  // STL Model Library
+  stlSave:   (srcPath)  => ipcRenderer.invoke('stl-save', srcPath),
+  stlList:   ()         => ipcRenderer.invoke('stl-list'),
+  stlDelete: (name)     => ipcRenderer.invoke('stl-delete', name),
+  stlRead:   (filePath) => ipcRenderer.invoke('stl-read', filePath),
+  snapshotSave: (dataUrl) => ipcRenderer.invoke('snapshot-save', dataUrl),
+
   openExternal: (url) =>
     ipcRenderer.invoke('open-external', url),
 

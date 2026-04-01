@@ -6,6 +6,7 @@
 <title>VADT — Engineering Notebook</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -139,6 +140,31 @@ body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;l
 .cb-swatch.none::after{content:'';position:absolute;inset:2px;background:linear-gradient(to bottom right,transparent calc(50% - 1px),#f44 calc(50% - 1px),#f44 calc(50% + 1px),transparent calc(50% + 1px));}
 .cb-picker{width:22px;height:22px;border-radius:4px;border:2px solid #555;cursor:pointer;padding:0;background:none;}
 .cb-sep{width:1px;height:20px;background:#3a3a4a;}
+
+/* CAD BLOCK */
+.block-cad{background:#f4f4f8;border-radius:6px;overflow:hidden;position:relative;}
+.cad-canvas-wrap{position:relative;width:100%;background:#f0f0f5;}
+.cad-canvas{display:block;width:100%;height:320px;cursor:grab;}
+.cad-canvas:active{cursor:grabbing;}
+.cad-controls{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.55);border-radius:20px;padding:4px 8px;backdrop-filter:blur(4px);}
+.cad-btn{background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.18);color:#fff;font-size:11px;padding:3px 9px;border-radius:12px;cursor:pointer;transition:background 0.1s;white-space:nowrap;}
+.cad-btn:hover{background:rgba(255,255,255,0.25);}
+.cad-btn.active{background:rgba(245,197,66,0.35);border-color:rgba(245,197,66,0.6);color:#f5c542;}
+.cad-sep{width:1px;height:14px;background:rgba(255,255,255,0.2);}
+.cad-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:160px;color:#999;font-size:13px;cursor:pointer;}
+.cad-empty:hover{background:#eaeaf0;}
+.cad-empty-icon{font-size:32px;color:#bbb;}
+.cad-footer{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:#ebebf2;font-size:11px;color:#666;}
+.cad-filename{font-family:'JetBrains Mono',monospace;font-size:11px;color:#555;}
+
+/* MODEL LIBRARY DRAWER */
+#modelDrawer{width:252px;border-left:1px solid var(--b1);display:none;flex-direction:column;background:var(--s1);flex-shrink:0;overflow:hidden;}
+#modelDrawer.open{display:flex;}
+.mdl-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--r);cursor:pointer;transition:background 0.1s;}
+.mdl-item:hover{background:var(--s3);}
+.mdl-item-name{flex:1;font-size:12px;color:var(--t1);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mdl-item-del{background:none;border:none;color:var(--t3);cursor:pointer;font-size:12px;padding:2px 5px;border-radius:3px;flex-shrink:0;}
+.mdl-item-del:hover{color:#ff7b77;background:rgba(232,48,42,0.12);}
 
 /* DECISION LOG */
 .dl-stage{background:var(--s2);border:1px solid var(--b1);border-radius:var(--rl);margin-bottom:10px;overflow:hidden;}
@@ -299,6 +325,18 @@ body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;l
           <div style="font-size:36px;opacity:0.2;"></div>
           <p>Select an entry to edit,<br>or create a new one.</p>
         </div>
+      </div>
+      <!-- Model library drawer -->
+      <div id="modelDrawer">
+        <div style="padding:8px 12px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+          <span style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;">Model Library</span>
+          <button onclick="toggleModelDrawer()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:3px;line-height:1;" title="Close">✕</button>
+        </div>
+        <div style="padding:8px;border-bottom:1px solid var(--b1);flex-shrink:0;">
+          <button class="btn-g" style="width:100%;font-size:12px;" onclick="uploadNewSTL()">+ Upload STL</button>
+        </div>
+        <div id="modelList" class="scr" style="flex:1;padding:6px;"></div>
+        <div style="padding:7px 10px;border-top:1px solid var(--b1);font-size:11px;color:var(--t3);flex-shrink:0;">Click a model to insert it</div>
       </div>
       <!-- Rules reference drawer -->
       <div id="rulesDrawer">
@@ -558,8 +596,10 @@ function renderEditor(entry) {
       <button class="tb-btn" onclick="addBlock('image')">Image</button>
       <button class="tb-btn" onclick="addBlock('table')">Table</button>
       <button class="tb-btn" onclick="addBlock('header-box')">Header</button>
+      <button class="tb-btn" onclick="addBlock('cad')">CAD</button>
       <div class="tb-sep"></div>
-      <button class="tb-btn" id="rulesToggleBtn" onclick="toggleRulesPanel()" style="margin-left:auto;">Rules</button>
+      <button class="tb-btn" id="modelsToggleBtn" onclick="toggleModelDrawer()" style="margin-left:auto;">Models</button>
+      <button class="tb-btn" id="rulesToggleBtn" onclick="toggleRulesPanel()">Rules</button>
       <div class="tb-sep"></div>
       <button class="btn-o" style="font-size:11px;padding:4px 10px;" onclick="deleteEntry(${entry.id})">Delete Entry</button>
     </div>
@@ -569,6 +609,7 @@ function renderEditor(entry) {
         ondragleave="nbPageDragLeave(event)"
         ondrop="nbPageDrop(event)">${renderBlocks(entry)}</div>
     </div>`;
+  setTimeout(initAllCadBlocks, 0);
 }
 
 function renderBlocks(entry) {
@@ -660,6 +701,34 @@ function blockInner(block) {
         ${bodyText ? `<div class="block-rule-text">${esc(bodyText)}</div>` : ''}
         <span class="block-rule-tag" style="background:${accent}22;color:${accent};">${esc(d.section||'')}</span>
       </div>`;
+    }
+    case 'cad': {
+      if (d.stlPath) {
+        return `<div class="block-cad">
+          <div class="cad-canvas-wrap">
+            <canvas class="cad-canvas" data-stl="${esc(d.stlPath)}"></canvas>
+            <div class="cad-controls">
+              <button class="cad-btn active" onclick="cadView(this,'iso')">Iso</button>
+              <button class="cad-btn" onclick="cadView(this,'front')">Front</button>
+              <button class="cad-btn" onclick="cadView(this,'top')">Top</button>
+              <button class="cad-btn" onclick="cadView(this,'right')">Right</button>
+              <div class="cad-sep"></div>
+              <button class="cad-btn active" onclick="cadMode(this,'shaded')">Shaded</button>
+              <button class="cad-btn" onclick="cadMode(this,'lines')">Lines</button>
+              <div class="cad-sep"></div>
+              <button class="cad-btn" onclick="cadSnapshot(this)">Save View</button>
+            </div>
+          </div>
+          <div class="cad-footer">
+            <span class="cad-filename">${esc(d.stlName||'model.stl')}</span>
+            <button class="cad-btn" style="position:static;background:rgba(0,0,0,0.08);color:#555;border-color:#ccc;" onclick="cadUploadToDrive(this)">Save to Drive</button>
+          </div>
+        </div>`;
+      }
+      return `<div class="block-cad"><div class="cad-empty" onclick="insertCadFromLibrary(this)">
+        <div class="cad-empty-icon">⬡</div>
+        <span>Click to choose a model, or open Models panel</span>
+      </div></div>`;
     }
     default: return `<div style="color:#aaa;font-size:12px;">[Unknown block: ${block.type}]</div>`;
   }
@@ -785,7 +854,7 @@ function clearBlockColors() {
 
 function addBlock(type) {
   const entry = NB.entries.find(e => e.id === NB.selEntry); if (!entry) return;
-  const defaults = { title:{text:''},subtitle:{text:''},text:{text:''},date_row:{},divider:{},sig:{},image:{},table:{headers:['Column 1','Column 2','Column 3'],rows:[['','',''],['','','']]}, 'header-box':{team:NB.config.team||'TEAM',event:NB.config.season||'Season'} };
+  const defaults = { title:{text:''},subtitle:{text:''},text:{text:''},date_row:{},divider:{},sig:{},image:{},table:{headers:['Column 1','Column 2','Column 3'],rows:[['','',''],['','','']]}, 'header-box':{team:NB.config.team||'TEAM',event:NB.config.season||'Season'}, cad:{} };
   entry.blocks.push({ type, data: defaults[type]||{} });
   save();
   renderEditor(entry);
@@ -866,13 +935,291 @@ function nbPageDrop(e) {
   dragRule = null; save(); renderEditor(entry);
 }
 
+// ─── CAD / STL VIEWER ────────────────────────────────────────────────────────
+
+const cadScenes = new WeakMap();
+
+function parseSTLBuffer(buffer) {
+  const dv = new DataView(buffer);
+  // Check for ASCII STL
+  const header = String.fromCharCode(...new Uint8Array(buffer, 0, 5));
+  if (header.startsWith('solid')) {
+    // ASCII path — fall back to a simple parse
+    const text = new TextDecoder().decode(buffer);
+    const verts = [];
+    const re = /vertex\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) { verts.push(+m[1], +m[2], +m[3]); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    geo.computeVertexNormals();
+    return geo;
+  }
+  // Binary STL
+  const triCount = dv.getUint32(80, true);
+  const verts = new Float32Array(triCount * 9);
+  const norms = new Float32Array(triCount * 9);
+  let off = 84;
+  for (let i = 0; i < triCount; i++) {
+    const nx = dv.getFloat32(off,true), ny = dv.getFloat32(off+4,true), nz = dv.getFloat32(off+8,true);
+    off += 12;
+    for (let v = 0; v < 3; v++) {
+      const b = i*9 + v*3;
+      verts[b]   = dv.getFloat32(off,true);
+      verts[b+1] = dv.getFloat32(off+4,true);
+      verts[b+2] = dv.getFloat32(off+8,true);
+      norms[b] = nx; norms[b+1] = ny; norms[b+2] = nz;
+      off += 12;
+    }
+    off += 2;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  geo.setAttribute('normal',   new THREE.BufferAttribute(norms, 3));
+  return geo;
+}
+
+function initCadBlock(canvasEl) {
+  if (cadScenes.has(canvasEl)) return;
+  const stlPath = canvasEl.dataset.stl;
+  if (!stlPath || !window.electronAPI) return;
+
+  window.electronAPI.stlRead(stlPath).then(buffer => {
+    const geo = parseSTLBuffer(buffer);
+
+    // Center + normalize
+    geo.computeBoundingBox();
+    const box = geo.boundingBox;
+    const center = new THREE.Vector3(); box.getCenter(center);
+    const size   = new THREE.Vector3(); box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    geo.translate(-center.x, -center.y, -center.z);
+
+    const W = canvasEl.offsetWidth || 500, H = 320;
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(W, H);
+    renderer.setClearColor(0xf0f0f5);
+
+    const scene  = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(40, W / H, maxDim * 0.001, maxDim * 100);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(1, 2, 2); scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.3); fill.position.set(-1, -1, 1); scene.add(fill);
+
+    // Shaded mesh
+    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0x4a90d9, specular: 0x222222, shininess: 40 }));
+    scene.add(mesh);
+
+    // Line overlay (hidden by default)
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo, 15),
+      new THREE.LineBasicMaterial({ color: 0x111111 })
+    );
+    edges.visible = false;
+    scene.add(edges);
+
+    // Isometric camera position
+    const dist = maxDim * 2.2;
+    const sph  = { phi: Math.PI / 4, theta: Math.PI / 4, radius: dist };
+
+    function updateCamera() {
+      camera.position.set(
+        sph.radius * Math.sin(sph.phi) * Math.cos(sph.theta),
+        sph.radius * Math.cos(sph.phi),
+        sph.radius * Math.sin(sph.phi) * Math.sin(sph.theta)
+      );
+      camera.lookAt(0, 0, 0);
+      renderer.render(scene, camera);
+    }
+    updateCamera();
+
+    // Orbit mouse handler
+    let drag = false, lastX = 0, lastY = 0;
+    canvasEl.addEventListener('mousedown', e => { drag = true; lastX = e.clientX; lastY = e.clientY; });
+    window.addEventListener('mouseup', () => { drag = false; });
+    canvasEl.addEventListener('mousemove', e => {
+      if (!drag) return;
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      sph.theta -= dx * 0.008;
+      sph.phi = Math.max(0.05, Math.min(Math.PI - 0.05, sph.phi + dy * 0.008));
+      lastX = e.clientX; lastY = e.clientY;
+      updateCamera();
+    });
+    canvasEl.addEventListener('wheel', e => {
+      e.preventDefault();
+      sph.radius = Math.max(maxDim * 0.5, Math.min(maxDim * 8, sph.radius * (1 + e.deltaY * 0.001)));
+      updateCamera();
+    }, { passive: false });
+
+    cadScenes.set(canvasEl, { renderer, scene, camera, mesh, edges, sph, maxDim, updateCamera });
+  }).catch(err => console.error('STL load error:', err));
+}
+
+function initAllCadBlocks() {
+  document.querySelectorAll('.cad-canvas[data-stl]').forEach(initCadBlock);
+}
+
+const CAD_VIEW_PRESETS = {
+  iso:   { phi: Math.PI/4,       theta: Math.PI/4 },
+  front: { phi: Math.PI/2,       theta: 0 },
+  top:   { phi: 0.01,            theta: 0 },
+  right: { phi: Math.PI/2,       theta: Math.PI/2 },
+};
+
+function cadView(btn, view) {
+  const canvas = btn.closest('.block-cad').querySelector('.cad-canvas');
+  const sc = cadScenes.get(canvas); if (!sc) return;
+  const p = CAD_VIEW_PRESETS[view]; if (!p) return;
+  sc.sph.phi = p.phi; sc.sph.theta = p.theta;
+  sc.updateCamera();
+  btn.closest('.cad-controls').querySelectorAll('.cad-btn').forEach(b => {
+    if (['Iso','Front','Top','Right'].includes(b.textContent)) b.classList.remove('active');
+  });
+  btn.classList.add('active');
+}
+
+function cadMode(btn, mode) {
+  const canvas = btn.closest('.block-cad').querySelector('.cad-canvas');
+  const sc = cadScenes.get(canvas); if (!sc) return;
+  if (mode === 'lines') {
+    sc.mesh.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    sc.edges.visible = true;
+  } else {
+    sc.mesh.material = new THREE.MeshPhongMaterial({ color: 0x4a90d9, specular: 0x222222, shininess: 40 });
+    sc.edges.visible = false;
+  }
+  sc.renderer.render(sc.scene, sc.camera);
+  btn.closest('.cad-controls').querySelectorAll('.cad-btn').forEach(b => {
+    if (['Shaded','Lines'].includes(b.textContent)) b.classList.remove('active');
+  });
+  btn.classList.add('active');
+}
+
+function cadSnapshot(btn) {
+  const canvas = btn.closest('.block-cad').querySelector('.cad-canvas');
+  const sc = cadScenes.get(canvas); if (!sc) return;
+  sc.renderer.render(sc.scene, sc.camera);
+  const dataUrl = canvas.toDataURL('image/png');
+  if (window.electronAPI?.snapshotSave) {
+    window.electronAPI.snapshotSave(dataUrl);
+  } else {
+    // Web fallback — trigger download
+    const a = document.createElement('a');
+    a.href = dataUrl; a.download = 'cad-view.png'; a.click();
+  }
+}
+
+function cadUploadToDrive(btn) {
+  const canvas = btn.closest('.block-cad').querySelector('.cad-canvas');
+  const sc = cadScenes.get(canvas); if (!sc) { alert('Model not loaded yet.'); return; }
+  const token = localStorage.getItem('gToken');
+  if (!token) { alert('Sign in with Google first to save to Drive.'); return; }
+  sc.renderer.render(sc.scene, sc.camera);
+  canvas.toBlob(async blob => {
+    btn.textContent = 'Saving…';
+    try {
+      const meta = JSON.stringify({ name: 'cad-view.png', mimeType: 'image/png' });
+      const form = new FormData();
+      form.append('metadata', new Blob([meta], { type: 'application/json' }));
+      form.append('file', blob);
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (data.id) {
+        btn.textContent = 'Saved!';
+        setTimeout(() => btn.textContent = 'Save to Drive', 2000);
+      } else {
+        throw new Error(data.error?.message || 'Upload failed');
+      }
+    } catch(e) {
+      btn.textContent = 'Save to Drive';
+      alert('Drive upload failed: ' + e.message);
+    }
+  }, 'image/png');
+}
+
+// ─── MODEL LIBRARY ────────────────────────────────────────────────────────────
+
+function toggleModelDrawer() {
+  const drawer = document.getElementById('modelDrawer');
+  const btn = document.getElementById('modelsToggleBtn');
+  const isOpen = drawer.classList.toggle('open');
+  if (btn) btn.classList.toggle('active', isOpen);
+  if (isOpen) renderModelList();
+  // Close rules if open
+  if (isOpen) {
+    document.getElementById('rulesDrawer').classList.remove('open');
+    const rb = document.getElementById('rulesToggleBtn');
+    if (rb) rb.classList.remove('active');
+  }
+}
+
+async function renderModelList() {
+  const list = document.getElementById('modelList'); if (!list) return;
+  if (!window.electronAPI) {
+    list.innerHTML = '<div class="empty" style="padding:16px;">Model library requires the desktop app.</div>';
+    return;
+  }
+  const models = await window.electronAPI.stlList();
+  if (!models.length) {
+    list.innerHTML = '<div class="empty" style="padding:16px;font-size:12px;color:var(--t3);">No models saved yet.<br>Upload an STL to get started.</div>';
+    return;
+  }
+  list.innerHTML = models.map(m => `
+    <div class="mdl-item" onclick="insertCadBlock(${JSON.stringify(m.path)}, ${JSON.stringify(m.name)})">
+      <span style="font-size:16px;color:var(--t3);">⬡</span>
+      <span class="mdl-item-name" title="${esc(m.path)}">${esc(m.name)}</span>
+      <button class="mdl-item-del" onclick="event.stopPropagation();deleteModel(${JSON.stringify(m.name)},this)" title="Remove">✕</button>
+    </div>`).join('');
+}
+
+async function uploadNewSTL() {
+  if (!window.electronAPI) return;
+  const srcPath = await window.electronAPI.openFileDialog([{ name: 'STL Files', extensions: ['stl'] }]);
+  if (!srcPath) return;
+  const result = await window.electronAPI.stlSave(srcPath);
+  if (result) renderModelList();
+}
+
+async function deleteModel(name, btn) {
+  if (!confirm(`Remove "${name}" from library?`)) return;
+  await window.electronAPI.stlDelete(name);
+  renderModelList();
+}
+
+function insertCadBlock(stlPath, stlName) {
+  const entry = NB.entries.find(e => e.id === NB.selEntry); if (!entry) return;
+  entry.blocks.push({ type: 'cad', data: { stlPath, stlName } });
+  save();
+  renderEditor(entry);
+  initAllCadBlocks();
+  const pc = document.querySelector('.page-canvas');
+  if (pc) setTimeout(() => pc.scrollTop = pc.scrollHeight, 50);
+}
+
+function insertCadFromLibrary(el) {
+  // Called from empty CAD block placeholder — open model drawer
+  toggleModelDrawer();
+}
+
 // ─── RULES PANEL ────────────────────────────────────────────────────────────
 function toggleRulesPanel() {
   const drawer = document.getElementById('rulesDrawer');
   const btn = document.getElementById('rulesToggleBtn');
   const isOpen = drawer.classList.toggle('open');
   if (btn) btn.classList.toggle('active', isOpen);
-  if (isOpen) { renderRulesPanel(''); document.getElementById('rulesPanelSearch').value = ''; }
+  if (isOpen) {
+    renderRulesPanel(''); document.getElementById('rulesPanelSearch').value = '';
+    document.getElementById('modelDrawer').classList.remove('open');
+    const mb = document.getElementById('modelsToggleBtn');
+    if (mb) mb.classList.remove('active');
+  }
 }
 function renderRulesPanel(filter) {
   const q = filter.toLowerCase();

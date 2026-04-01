@@ -133,6 +133,65 @@ ipcMain.handle('open-external', (_event, url) => {
   shell.openExternal(url);
 });
 
+// ─── IPC: STL MODEL LIBRARY ───────────────────────────────────────────────────
+
+const modelsDir = path.join(app.getPath('userData'), 'models');
+fs.mkdirSync(modelsDir, { recursive: true });
+
+ipcMain.handle('stl-save', async (_event, srcPath) => {
+  const name = path.basename(srcPath);
+  const dest = path.join(modelsDir, name);
+  // If name collision, ask user
+  if (fs.existsSync(dest)) {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Replace', 'Keep Both', 'Cancel'],
+      title: 'File Already Exists',
+      message: `"${name}" already exists in your model library.`,
+    });
+    if (response === 2) return null;
+    if (response === 1) {
+      const ext = path.extname(name);
+      const base = path.basename(name, ext);
+      const ts = Date.now();
+      const newName = `${base}_${ts}${ext}`;
+      fs.copyFileSync(srcPath, path.join(modelsDir, newName));
+      return { name: newName, path: path.join(modelsDir, newName) };
+    }
+  }
+  fs.copyFileSync(srcPath, dest);
+  return { name, path: dest };
+});
+
+ipcMain.handle('stl-list', async () => {
+  if (!fs.existsSync(modelsDir)) return [];
+  return fs.readdirSync(modelsDir)
+    .filter(f => f.toLowerCase().endsWith('.stl'))
+    .map(f => ({ name: f, path: path.join(modelsDir, f) }));
+});
+
+ipcMain.handle('stl-delete', async (_event, name) => {
+  const p = path.join(modelsDir, name);
+  if (fs.existsSync(p)) fs.unlinkSync(p);
+});
+
+ipcMain.handle('stl-read', async (_event, filePath) => {
+  const buf = fs.readFileSync(filePath);
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+});
+
+ipcMain.handle('snapshot-save', async (_event, dataUrl) => {
+  const { filePath } = await dialog.showSaveDialog({
+    title: 'Save View',
+    defaultPath: 'cad-view.png',
+    filters: [{ name: 'PNG Image', extensions: ['png'] }],
+  });
+  if (!filePath) return null;
+  const b64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+  fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+  return filePath;
+});
+
 // ─── IPC: GOOGLE AUTH (ELECTRON OAUTH FLOW) ───────────────────────────────────
 // Opens a child BrowserWindow for Google sign-in and intercepts the redirect
 // back to vexscout.vercel.app to extract the access token without navigating
