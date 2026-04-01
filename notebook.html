@@ -746,7 +746,9 @@ function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollH
 function selectBlock(el) {
   document.querySelectorAll('.nb-block').forEach(b => b.classList.remove('selected'));
   el.classList.add('selected');
-  showColorBar(el);
+  // Defer color bar positioning — reading offsetHeight inside a click handler
+  // forces synchronous layout which can drop textarea focus in Chromium/Electron.
+  requestAnimationFrame(() => showColorBar(el));
 }
 
 // ── COLOR BAR ────────────────────────────────────────────────────────────────
@@ -784,6 +786,12 @@ function initColorBar() {
 function showColorBar(blockEl) {
   const bar = document.getElementById('colorBar');
   if (!bar) return;
+  // Don't steal focus from an active input/textarea inside this block
+  const ae = document.activeElement;
+  if (ae && blockEl.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
+    bar.classList.remove('visible');
+    return;
+  }
 
   // Only show for color-supporting block types
   const entry = NB.entries.find(e => e.id === NB.selEntry);
