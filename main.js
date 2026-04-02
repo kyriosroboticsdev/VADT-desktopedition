@@ -4,6 +4,11 @@ const { spawn } = require('child_process');
 const fs     = require('fs');
 const os     = require('os');
 const { autoUpdater } = require('electron-updater');
+const { buildMenu } = require('./menu');
+
+// Allow the renderer and main process to address large CAD assemblies (1 GB+).
+// Must be set before app.whenReady().
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
 // ─── WINDOW ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +32,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+  buildMenu(app);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -196,29 +202,112 @@ ipcMain.handle('stl-delete', async (_event, name) => {
   }
 });
 
-ipcMain.handle('stl-read', async (_event, filePath) => {
+ipcMain.handle('stl-read', async (event, filePath) => {
   const ext = path.extname(filePath).toLowerCase();
 
-  // Buffer.from(nodeBuffer) returns a Buffer backed by its own
-  // dedicated ArrayBuffer — byteOffset is always 0 and byteLength
-  // equals exactly the file size. This is what we need for IPC.
   function safeRead(p) {
     const raw = fs.readFileSync(p);
-    // Allocate a fresh buffer of exactly the right size
     const copy = Buffer.allocUnsafe(raw.length);
     raw.copy(copy);
-    // Return as Uint8Array — structured clone transfers it cleanly
-    return new Uint8Array(copy.buffer, 0, copy.length);
+    return new Uint8Array(copy.buffer, copy.byteOffset, copy.length);
+  }
+
+  // Warn before loading very large files so the user isn't surprised by long
+  // wait times or an out-of-memory crash.
+  const WARN_THRESHOLD = 256 * 1024 * 1024; // 256 MB
+  const fileSize = fs.statSync(filePath).size;
+  if (fileSize > WARN_THRESHOLD) {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0];
+    const sizeMB = (fileSize / (1024 * 1024)).toFixed(0);
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Load Anyway', 'Cancel'],
+      title: 'Large Model File',
+      message: `This model is ${sizeMB} MB. Loading may take a while and use significant memory.`,
+      detail: 'Complex robot assemblies can be rendered but may be slow to load.',
+    });
+    if (response === 1) return null;
+  }
+
+  if (ext === '.obj') {
+    // Parse OBJ in the main process via streaming — reads line by line so the
+    // full file text is never held in memory all at once. Only the parsed
+    // Float32 geometry arrays are sent over IPC, which is far smaller than the
+    // raw text and avoids the extra TextDecoder copy in the renderer.
+    const mtlPath = filePath.replace(/\.obj$/i, '.mtl');
+    const matMap = new Map();
+    if (fs.existsSync(mtlPath)) {
+      let cur = null, kd = null;
+      for (const line of fs.readFileSync(mtlPath, 'utf8').split('\n')) {
+        const t = line.trim();
+        if (t.startsWith('newmtl ')) {
+          if (cur !== null) matMap.set(cur, kd ?? [0.8, 0.8, 0.8]);
+          cur = t.slice(7).trim(); kd = null;
+        } else if (t.startsWith('Kd ')) {
+          const p = t.split(/\s+/);
+          kd = [+p[1], +p[2], +p[3]];
+        }
+      }
+      if (cur !== null) matMap.set(cur, kd ?? [0.8, 0.8, 0.8]);
+    }
+
+    const groups = await new Promise((resolve, reject) => {
+      const vPos = [], vNor = [];
+      const groupMap = new Map();
+      let curMat = '__default__';
+
+      const rl = require('readline').createInterface({
+        input: fs.createReadStream(filePath),
+        crlfDelay: Infinity,
+      });
+
+      rl.on('line', (raw) => {
+        const t = raw.trim();
+        if (t[0] === 'v' && t[1] === ' ') {
+          const p = t.split(/\s+/);
+          vPos.push(+p[1], +p[2], +p[3]);
+        } else if (t[0] === 'v' && t[1] === 'n' && t[2] === ' ') {
+          const p = t.split(/\s+/);
+          vNor.push(+p[1], +p[2], +p[3]);
+        } else if (t.startsWith('usemtl ')) {
+          curMat = t.slice(7).trim();
+        } else if (t[0] === 'f' && t[1] === ' ') {
+          if (!groupMap.has(curMat)) groupMap.set(curMat, { pos: [], nor: [] });
+          const g = groupMap.get(curMat);
+          const face = t.slice(2).trim().split(/\s+/).map(tok => {
+            const pts = tok.split('/');
+            return { vi: (+pts[0] - 1) * 3, ni: pts[2] ? (+pts[2] - 1) * 3 : -1 };
+          });
+          for (let i = 1; i < face.length - 1; i++) {
+            for (const v of [face[0], face[i], face[i + 1]]) {
+              g.pos.push(vPos[v.vi], vPos[v.vi + 1], vPos[v.vi + 2]);
+              if (v.ni >= 0) g.nor.push(vNor[v.ni], vNor[v.ni + 1], vNor[v.ni + 2]);
+            }
+          }
+        }
+      });
+
+      rl.on('close', () => {
+        const result = [];
+        for (const [name, g] of groupMap) {
+          if (!g.pos.length) continue;
+          result.push({
+            name,
+            positions: new Float32Array(g.pos),
+            normals: g.nor.length === g.pos.length ? new Float32Array(g.nor) : null,
+            color: matMap.get(name) ?? [0.72, 0.74, 0.78],
+          });
+        }
+        resolve(result);
+      });
+
+      rl.on('error', reject);
+    });
+
+    return { type: 'obj-geo', groups };
   }
 
   const data = safeRead(filePath);
-
-  if (ext === '.obj') {
-    const mtlPath = filePath.replace(/\.obj$/i, '.mtl');
-    const mtl = fs.existsSync(mtlPath) ? safeRead(mtlPath) : null;
-    return { type: 'obj', data, mtl };
-  }
-
   const type = (ext === '.glb' || ext === '.gltf') ? ext.slice(1) : 'stl';
   return { type, data };
 });

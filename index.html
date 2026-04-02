@@ -302,9 +302,72 @@ input[type=range]{width:100%;accent-color:var(--gold);}
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:300;display:none;align-items:center;justify-content:center;}
 .modal-backdrop.open{display:flex;}
 .modal-box{background:var(--s2);border:1px solid var(--b2);border-radius:14px;width:460px;max-width:95vw;padding:26px 28px;box-shadow:0 20px 50px rgba(0,0,0,0.5);}
+
+/* ─── HOMEPAGE ─── */
+#homePage{position:fixed;inset:0;z-index:500;background:var(--s0);display:flex;flex-direction:column;overflow:hidden;}
+.hp-grid-bg{position:absolute;inset:0;background-image:linear-gradient(var(--b1) 1px,transparent 1px),linear-gradient(90deg,var(--b1) 1px,transparent 1px);background-size:44px 44px;pointer-events:none;}
+.hp-accent{height:3px;background:linear-gradient(90deg,var(--green),var(--gold),var(--blue));flex-shrink:0;}
+.hp-body{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:40px;padding:40px 60px;position:relative;}
+.hp-logo{text-align:center;}
+.hp-logo-text{font-family:var(--fd);font-weight:900;font-size:54px;letter-spacing:0.06em;line-height:1;margin-bottom:10px;}
+.hp-logo-text em{color:var(--gold);font-style:normal;}
+.hp-logo-tag{font-size:11px;color:var(--t3);letter-spacing:0.24em;text-transform:uppercase;font-family:var(--fd);font-weight:700;}
+.hp-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;width:100%;max-width:900px;}
+.hp-card{background:var(--s2);border:1px solid var(--b1);border-radius:14px;padding:30px 26px;cursor:pointer;transition:transform 0.18s,box-shadow 0.18s,border-color 0.18s;display:flex;flex-direction:column;gap:14px;position:relative;overflow:hidden;}
+.hp-card::after{content:'';position:absolute;inset:0;opacity:0;transition:opacity 0.18s;pointer-events:none;}
+.hp-card:hover{transform:translateY(-4px);box-shadow:0 20px 48px rgba(0,0,0,0.45);}
+.hp-card:hover::after{opacity:1;}
+.hp-scout{border-top:3px solid var(--green);}
+.hp-scout::after{background:linear-gradient(140deg,rgba(34,197,94,0.07) 0%,transparent 55%);}
+.hp-scout:hover{border-color:rgba(34,197,94,0.5);border-top-color:var(--green);}
+.hp-notebook{border-top:3px solid var(--gold);}
+.hp-notebook::after{background:linear-gradient(140deg,rgba(245,197,66,0.07) 0%,transparent 55%);}
+.hp-notebook:hover{border-color:rgba(245,197,66,0.45);border-top-color:var(--gold);}
+.hp-cad{border-top:3px solid var(--blue);}
+.hp-cad::after{background:linear-gradient(140deg,rgba(26,125,223,0.07) 0%,transparent 55%);}
+.hp-cad:hover{border-color:rgba(26,125,223,0.45);border-top-color:var(--blue);}
+.hp-card-ico{font-size:30px;line-height:1;}
+.hp-card-title{font-family:var(--fd);font-weight:900;font-size:21px;letter-spacing:0.03em;line-height:1;}
+.hp-card-desc{font-size:13px;color:var(--t2);line-height:1.65;flex:1;}
+.hp-card-cta{font-family:var(--fd);font-size:12px;font-weight:700;letter-spacing:0.08em;color:var(--t3);transition:color 0.15s;text-transform:uppercase;}
+.hp-scout:hover .hp-card-cta{color:var(--green);}
+.hp-notebook:hover .hp-card-cta{color:var(--gold);}
+.hp-cad:hover .hp-card-cta{color:var(--blue);}
+.hp-skip{background:transparent;border:1px solid var(--b1);color:var(--t3);font-size:12px;cursor:pointer;font-family:var(--fb);letter-spacing:0.05em;padding:7px 18px;border-radius:var(--r);transition:all 0.15s;}
+.hp-skip:hover{color:var(--t2);border-color:var(--b2);}
 </style>
 </head>
 <body>
+
+<!-- ─── HOMEPAGE ─── -->
+<div id="homePage">
+  <div class="hp-grid-bg"></div>
+  <div class="hp-accent"></div>
+  <div class="hp-body">
+    <div class="hp-logo">
+      <div class="hp-logo-text">VA<em>DT</em></div>
+      <div class="hp-logo-tag">VEX Analysis &amp; Documentation Tool</div>
+    </div>
+    <div class="hp-cards">
+      <div class="hp-card hp-scout" onclick="enterApp('scout')">
+        <div class="hp-card-title">Match Scouting</div>
+        <div class="hp-card-desc">Load events from RobotEvents, track team performance, and analyze match data with video integration.</div>
+        <div class="hp-card-cta">Open Scouting →</div>
+      </div>
+      <div class="hp-card hp-notebook" onclick="enterApp('notebook')">
+        <div class="hp-card-title">Engineering Notebook</div>
+        <div class="hp-card-desc">Document your design process, log team meetings, embed 3D models, and export judge-ready notebooks.</div>
+        <div class="hp-card-cta">Open Notebook →</div>
+      </div>
+      <div class="hp-card hp-cad" onclick="enterApp('cad')">
+        <div class="hp-card-title">CAD Viewer</div>
+        <div class="hp-card-desc">Import OBJ and STL files to visualize and inspect robot designs in full 3D with material support.</div>
+        <div class="hp-card-cta">Open CAD Viewer →</div>
+      </div>
+    </div>
+    <button class="hp-skip" onclick="enterApp(null)">Skip — enter app</button>
+  </div>
+</div>
 
 <!-- TOPBAR -->
 <div class="topbar">
@@ -587,6 +650,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
     <div class="sep"></div>
     <button class="btn-o" onclick="stlImport()">+ Import Model</button>
     <button class="btn-o" id="stlSnapshotBtn" onclick="stlSnapshot()" style="display:none;">📸 Save View</button>
+    <button class="btn-o" id="stlOrientBtn" onclick="stlToggleReorient()" style="display:none;">⟳ Reorient</button>
     <div style="margin-left:auto;display:flex;gap:7px;">
       <button class="btn-o" onclick="closeSTLViewer()">← Back</button>
     </div>
@@ -604,9 +668,26 @@ input[type=range]{width:100%;accent-color:var(--gold);}
         <div style="font-size:40px;opacity:0.15;">🔩</div>
         <p style="font-size:13px;">Import an OBJ or STL file to view your robot CAD</p>
       </div>
+      <!-- Reorient panel — shown when reorient mode is active -->
+      <div id="stlOrientPanel" style="display:none;position:absolute;top:10px;left:10px;background:rgba(10,10,20,0.92);border:1px solid var(--b1);border-radius:7px;padding:10px 12px;font-size:11px;color:var(--t2);z-index:10;">
+        <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;margin-bottom:8px;">Orient Model</div>
+        <div style="display:grid;grid-template-columns:16px 1fr 1fr;align-items:center;gap:4px 6px;">
+          <span style="color:var(--t3);font-weight:600;">X</span>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('x',-90)">−90°</button>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('x', 90)">+90°</button>
+          <span style="color:var(--t3);font-weight:600;">Y</span>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('y',-90)">−90°</button>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('y', 90)">+90°</button>
+          <span style="color:var(--t3);font-weight:600;">Z</span>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('z',-90)">−90°</button>
+          <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('z', 90)">+90°</button>
+        </div>
+        <button class="btn-o" style="font-size:11px;padding:3px 0;width:100%;margin-top:6px;text-align:center;" onclick="stlResetOrientation()">Reset</button>
+        <div style="margin-top:7px;font-size:10px;color:var(--t3);">Drag to freely rotate model</div>
+      </div>
       <!-- Viewport controls hint -->
-      <div style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
-        Left drag — rotate &nbsp;·&nbsp; Right drag — pan &nbsp;·&nbsp; Scroll — zoom
+      <div id="stlControlsHint" style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
+        Left drag — orbit &nbsp;·&nbsp; Right drag — pan &nbsp;·&nbsp; Scroll — zoom
       </div>
       <!-- Loading indicator -->
       <div id="stlLoading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--t1);">

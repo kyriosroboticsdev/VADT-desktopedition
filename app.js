@@ -654,6 +654,12 @@ async function openTeamPage(teamId){
   renderTeamPage(teamId);
 }
 function closeTeamPage(){document.getElementById('teamPage').classList.remove('open');tpCharts.forEach(c=>{try{c.destroy();}catch{}});tpCharts=[];currentTeamId=null;}
+function enterApp(section) {
+  const hp = document.getElementById('homePage');
+  if (hp) hp.style.display = 'none';
+  if (section === 'notebook') openNotebook();
+  else if (section === 'cad') openSTLViewer();
+}
 function openNotebook(){const p=document.getElementById('notebookPage'),f=document.getElementById('notebookFrame');if(!f.src)f.src='notebook.html';p.style.display='flex';}
 function closeNotebook(){document.getElementById('notebookPage').style.display='none';}
 function renderTeamPage(teamId){
@@ -1150,6 +1156,8 @@ const STL = {
   mouse: { down: false, right: false, lastX: 0, lastY: 0 },
   spherical: { theta: 0.5, phi: 1.0, radius: 5 },
   target: new (typeof THREE !== 'undefined' ? THREE.Vector3 : Object)(),
+  orient: { active: false },
+  group: null,
 };
 
 function openSTLViewer() {
@@ -1210,17 +1218,26 @@ function initSTLRenderer() {
     if (!STL.mouse.down) return;
     const dx = e.clientX - STL.mouse.lastX, dy = e.clientY - STL.mouse.lastY;
     STL.mouse.lastX = e.clientX; STL.mouse.lastY = e.clientY;
-    if (STL.mouse.right) {
+    if (STL.orient.active && STL.group && !STL.mouse.right) {
+      // Reorient mode: left drag rotates the model around camera-relative axes so
+      // dragging always feels correct regardless of current camera angle.
+      const speed = 0.008;
+      const camDir = STL.camera.position.clone().sub(STL.target).normalize();
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), camDir).normalize();
+      STL.group.rotateOnWorldAxis(right, -dy * speed);
+      STL.group.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), -dx * speed);
+    } else if (STL.mouse.right) {
       // Pan
       const panSpeed = STL.spherical.radius * 0.001;
       STL.target.x -= dx * panSpeed;
       STL.target.y += dy * panSpeed;
+      updateSTLCamera();
     } else {
       // Orbit
       STL.spherical.theta -= dx * 0.008;
       STL.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, STL.spherical.phi - dy * 0.008));
+      updateSTLCamera();
     }
-    updateSTLCamera();
   });
   canvas.addEventListener('wheel', e => {
     STL.spherical.radius = Math.max(0.5, STL.spherical.radius * (1 + e.deltaY * 0.001));
@@ -1298,8 +1315,41 @@ async function deleteSTLModel(name) {
     STL.activeModel = null;
     document.getElementById('stlEmpty').style.display = 'flex';
     document.getElementById('stlSnapshotBtn').style.display = 'none';
+    document.getElementById('stlOrientBtn').style.display = 'none';
+    if (STL.orient.active) stlToggleReorient();
   }
   await refreshSTLLibrary();
+}
+
+// ─── MODEL ORIENTATION ────────────────────────────────────────────────────────
+function stlToggleReorient() {
+  STL.orient.active = !STL.orient.active;
+  const btn = document.getElementById('stlOrientBtn');
+  const panel = document.getElementById('stlOrientPanel');
+  const hint = document.getElementById('stlControlsHint');
+  if (STL.orient.active) {
+    btn.style.background = 'var(--gold)';
+    btn.style.color = '#000';
+    panel.style.display = '';
+    hint.textContent = 'Drag — rotate model  ·  Right drag — pan  ·  Scroll — zoom';
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    panel.style.display = 'none';
+    hint.textContent = 'Left drag — orbit  ·  Right drag — pan  ·  Scroll — zoom';
+  }
+}
+
+function stlRotateModel(axis, deg) {
+  if (!STL.group) return;
+  const rad = deg * Math.PI / 180;
+  const axes = { x: new THREE.Vector3(1,0,0), y: new THREE.Vector3(0,1,0), z: new THREE.Vector3(0,0,1) };
+  STL.group.rotateOnWorldAxis(axes[axis], rad);
+}
+
+function stlResetOrientation() {
+  if (!STL.group) return;
+  STL.group.rotation.set(0, 0, 0);
 }
 
 // ─── LOAD MODEL ───────────────────────────────────────────────────────────────
@@ -1310,13 +1360,23 @@ async function loadSTLModel(filePath, name) {
   renderSTLLibrary();
   try {
     const resp = await window.electronAPI.stlRead(filePath);
-    const toAB  = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-    const toTxt = u8 => new TextDecoder().decode(u8);
+    if (!resp) { stlHideLoading(); return; } // user cancelled large-file warning
+
+    const toAB = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 
     // Parse into array of { geo, mat } — same approach as notebook viewer
     let primitives;
-    if (resp.type === 'obj') {
-      primitives = stlParseOBJ(toTxt(resp.data), resp.mtl ? toTxt(resp.mtl) : null);
+    if (resp.type === 'obj-geo') {
+      // Geometry was parsed in the main process via streaming; just build BufferGeometry.
+      primitives = resp.groups.map(({ positions, normals, color }) => {
+        if (!positions.length) return null;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        if (normals) geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        else geo.computeVertexNormals();
+        return { geo, mat: new THREE.MeshStandardMaterial({ color: new THREE.Color(color[0], color[1], color[2]), metalness: 0.15, roughness: 0.65 }) };
+      }).filter(Boolean);
+      if (!primitives.length) primitives = [{ geo: new THREE.BufferGeometry(), mat: new THREE.MeshStandardMaterial({ color: 0xb8b8b8 }) }];
     } else {
       const geo = STLLoader.parse(toAB(resp.data));
       geo.computeVertexNormals();
@@ -1353,6 +1413,9 @@ async function loadSTLModel(filePath, name) {
 
     document.getElementById('stlEmpty').style.display = 'none';
     document.getElementById('stlSnapshotBtn').style.display = '';
+    document.getElementById('stlOrientBtn').style.display = '';
+    // Always leave reorient mode off between loads so the user starts fresh.
+    if (STL.orient.active) stlToggleReorient();
   } catch (err) {
     alert('Failed to load model: ' + err.message);
     console.error('Model load error:', err);

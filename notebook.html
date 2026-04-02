@@ -1227,13 +1227,18 @@ function initCadBlock(canvasEl) {
 
     let primitives;
     try {
-      if (resp.type === 'obj') {
-        const objText = safeToText(resp.data);
-        const mtlText = resp.mtl ? safeToText(resp.mtl) : null;
-        console.log('[CAD] OBJ text length:', objText.length, '| first 80 chars:', objText.slice(0, 80));
-        console.log('[CAD] MTL available:', !!mtlText);
-        primitives = parseOBJ(objText, mtlText);
-        console.log('[CAD] parseOBJ returned', primitives?.length, 'primitives');
+      if (resp.type === 'obj-geo') {
+        // Main process pre-parsed the OBJ — just build BufferGeometry from the groups.
+        primitives = resp.groups.map(({ positions, normals, color }) => {
+          if (!positions.length) return null;
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          if (normals) geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+          else geo.computeVertexNormals();
+          return { geo, mat: new THREE.MeshStandardMaterial({ color: new THREE.Color(color[0], color[1], color[2]), metalness: 0.15, roughness: 0.65, side: THREE.DoubleSide }) };
+        }).filter(Boolean);
+        if (!primitives.length) primitives = [{ geo: new THREE.BufferGeometry(), mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8 }) }];
+        console.log('[CAD] obj-geo groups:', primitives.length);
       } else if (resp.type === 'glb' || resp.type === 'gltf') {
         primitives = parseGLB(safeToAB(resp.data));
       } else {
