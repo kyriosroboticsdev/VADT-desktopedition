@@ -7,6 +7,44 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// Electron preloads don't run in iframes. If window.electronAPI is missing,
+// set up a postMessage bridge that tunnels IPC calls through the parent window.
+(function() {
+  if (window.electronAPI) return; // preload ran normally — nothing to do
+  if (window.parent === window) return; // not in an iframe — we're standalone, no bridge available
+
+  const pending = new Map();
+  let nextId = 1;
+
+  window.addEventListener('message', e => {
+    if (e.data?.type !== 'nb-api-res') return;
+    const p = pending.get(e.data.id);
+    if (!p) return;
+    pending.delete(e.data.id);
+    e.data.error ? p.reject(new Error(e.data.error)) : p.resolve(e.data.result);
+  });
+
+  function call(method, ...args) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      window.parent.postMessage({ type: 'nb-api-req', id, method, args }, '*');
+    });
+  }
+
+  window.electronAPI = {
+    isElectron:     true,
+    openFileDialog: filters      => call('openFileDialog', filters),
+    stlSave:        srcPath      => call('stlSave', srcPath),
+    stlList:        ()           => call('stlList'),
+    stlDelete:      name         => call('stlDelete', name),
+    stlRead:        filePath     => call('stlRead', filePath),
+    snapshotSave:   dataUrl      => call('snapshotSave', dataUrl),
+    openExternal:   url          => call('openExternal', url),
+  };
+})();
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -143,7 +181,7 @@ body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;l
 
 /* CAD BLOCK */
 .block-cad{background:#f4f4f8;border-radius:6px;overflow:hidden;position:relative;}
-.cad-canvas-wrap{position:relative;width:100%;background:#f0f0f5;}
+.cad-canvas-wrap{position:relative;width:100%;background:linear-gradient(180deg,#dde0e8 0%,#a8aab4 100%);}
 .cad-canvas{display:block;width:100%;height:320px;cursor:grab;}
 .cad-canvas:active{cursor:grabbing;}
 .cad-controls{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.55);border-radius:20px;padding:4px 8px;backdrop-filter:blur(4px);}
@@ -333,7 +371,7 @@ body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;l
           <button onclick="toggleModelDrawer()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:3px;line-height:1;" title="Close">✕</button>
         </div>
         <div style="padding:8px;border-bottom:1px solid var(--b1);flex-shrink:0;">
-          <button class="btn-g" style="width:100%;font-size:12px;" onclick="uploadNewSTL()">+ Upload STL</button>
+          <button class="btn-g" style="width:100%;font-size:12px;" onclick="uploadNewSTL()">+ Upload OBJ / STL</button>
         </div>
         <div id="modelList" class="scr" style="flex:1;padding:6px;"></div>
         <div style="padding:7px 10px;border-top:1px solid var(--b1);font-size:11px;color:var(--t3);flex-shrink:0;">Click a model to insert it</div>
@@ -940,9 +978,158 @@ function nbPageDrop(e) {
   dragRule = null; save(); renderEditor(entry);
 }
 
-// ─── CAD / STL VIEWER ────────────────────────────────────────────────────────
+// ─── CAD / STL + GLB VIEWER ──────────────────────────────────────────────────
 
 const cadScenes = new WeakMap();
+
+// Minimal inline GLB parser — extracts PBR materials + geometry from a GLB
+// ArrayBuffer without needing GLTFLoader. Handles Fusion 360 exports.
+function parseGLB(buffer) {
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== 0x46546C67) throw new Error('Not a GLB file');
+  const jsonLen = view.getUint32(12, true);
+  const j = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, jsonLen)));
+  // Binary chunk starts right after the JSON chunk
+  const binOffset = 20 + jsonLen;
+  const bin = buffer.slice(binOffset + 8);
+
+  function accessor(idx) {
+    const a = j.accessors[idx];
+    const bv = j.bufferViews[a.bufferView];
+    const off = (bv.byteOffset || 0) + (a.byteOffset || 0);
+    const comps = { SCALAR:1, VEC2:2, VEC3:3, VEC4:4, MAT4:16 }[a.type];
+    const T = a.componentType === 5126 ? Float32Array
+             : a.componentType === 5125 ? Uint32Array
+             : Uint16Array;
+    return new T(bin, off, a.count * comps);
+  }
+
+  const results = [];
+  for (const mesh of (j.meshes || [])) {
+    for (const prim of (mesh.primitives || [])) {
+      const geo = new THREE.BufferGeometry();
+      const pos = accessor(prim.attributes.POSITION);
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+      if (prim.attributes.NORMAL !== undefined) {
+        const nor = accessor(prim.attributes.NORMAL);
+        geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+      }
+      if (prim.indices !== undefined) {
+        const idx = accessor(prim.indices);
+        geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+      }
+      if (!prim.attributes.NORMAL) geo.computeVertexNormals();
+
+      let mat;
+      if (prim.material !== undefined && j.materials?.[prim.material]) {
+        const m = j.materials[prim.material];
+        const pbr = m.pbrMetallicRoughness || {};
+        const bc = pbr.baseColorFactor || [0.8, 0.8, 0.8, 1.0];
+        mat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(bc[0], bc[1], bc[2]),
+          metalness: pbr.metallicFactor ?? 0,
+          roughness: pbr.roughnessFactor ?? 1,
+          opacity: bc[3], transparent: bc[3] < 1,
+        });
+      } else {
+        mat = new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.55, roughness: 0.35 });
+      }
+      results.push({ geo, mat });
+    }
+  }
+  if (!results.length) throw new Error('No meshes in GLB');
+  return results;
+}
+
+// OBJ + MTL parser — preserves Fusion 360's smooth normals (NURBS-tessellated)
+// so curves look accurate without any vertex merging needed.
+function parseOBJ(objText, mtlText) {
+  // Build material map from MTL
+  const matMap = new Map(); // name → [r,g,b]
+  if (mtlText) {
+    let cur = null, kd = null;
+    for (const raw of mtlText.split('\n')) {
+      const t = raw.trim();
+      if (t.startsWith('newmtl ')) {
+        if (cur !== null) matMap.set(cur, kd || [0.8, 0.8, 0.8]);
+        cur = t.slice(7).trim(); kd = null;
+      } else if (t.startsWith('Kd ')) {
+        const p = t.split(/\s+/); kd = [+p[1], +p[2], +p[3]];
+      }
+    }
+    if (cur !== null) matMap.set(cur, kd || [0.8, 0.8, 0.8]);
+  }
+  const makeMat = name => {
+    const c = matMap.get(name) || [0.72, 0.74, 0.78];
+    return new THREE.MeshStandardMaterial({ color: new THREE.Color(c[0], c[1], c[2]), metalness: 0.15, roughness: 0.65 });
+  };
+
+  // Parse OBJ geometry
+  const vPos = [], vNor = [];
+  const groups = new Map(); // matName → { pos:[], nor:[] }
+  let curMat = '__default__';
+
+  for (const raw of objText.split('\n')) {
+    const t = raw.trim();
+    if (t.startsWith('v ') && t[1] === ' ') {
+      const p = t.split(/\s+/); vPos.push(+p[1], +p[2], +p[3]);
+    } else if (t.startsWith('vn ')) {
+      const p = t.split(/\s+/); vNor.push(+p[1], +p[2], +p[3]);
+    } else if (t.startsWith('usemtl ')) {
+      curMat = t.slice(7).trim();
+    } else if (t.startsWith('f ')) {
+      if (!groups.has(curMat)) groups.set(curMat, { pos: [], nor: [] });
+      const g = groups.get(curMat);
+      const face = t.slice(2).trim().split(/\s+/).map(tok => {
+        const pts = tok.split('/');
+        return { vi: (+pts[0] - 1) * 3, ni: pts[2] ? (+pts[2] - 1) * 3 : -1 };
+      });
+      // Fan triangulation for ngons
+      for (let i = 1; i < face.length - 1; i++) {
+        for (const v of [face[0], face[i], face[i + 1]]) {
+          g.pos.push(vPos[v.vi], vPos[v.vi + 1], vPos[v.vi + 2]);
+          if (v.ni >= 0) g.nor.push(vNor[v.ni], vNor[v.ni + 1], vNor[v.ni + 2]);
+        }
+      }
+    }
+  }
+
+  const results = [];
+  for (const [name, g] of groups) {
+    if (!g.pos.length) continue;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(g.pos), 3));
+    if (g.nor.length === g.pos.length) {
+      // Use Fusion 360's pre-computed smooth normals — these come from the NURBS and
+      // already represent curved surfaces correctly, better than recomputing from mesh.
+      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(g.nor), 3));
+    } else {
+      geo.computeVertexNormals();
+    }
+    results.push({ geo, mat: makeMat(name) });
+  }
+  return results.length ? results : null;
+}
+
+// Merge coincident vertices so computeVertexNormals() can smooth across edges.
+function buildIndexedGeo(positions) {
+  const map = new Map();
+  const verts = [];
+  const idxArr = [];
+  const N = positions.length / 3;
+  for (let i = 0; i < N; i++) {
+    const x = positions[i*3], y = positions[i*3+1], z = positions[i*3+2];
+    const key = x.toFixed(4) + ',' + y.toFixed(4) + ',' + z.toFixed(4);
+    let vi = map.get(key);
+    if (vi === undefined) { vi = verts.length/3; verts.push(x,y,z); map.set(key,vi); }
+    idxArr.push(vi);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+  geo.setIndex(idxArr);
+  geo.computeVertexNormals();
+  return geo;
+}
 
 function parseSTLBuffer(buffer) {
   const dv = new DataView(buffer);
@@ -955,76 +1142,94 @@ function parseSTLBuffer(buffer) {
     const re = /vertex\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)/g;
     let m;
     while ((m = re.exec(text)) !== null) { verts.push(+m[1], +m[2], +m[3]); }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
-    geo.computeVertexNormals();
-    return geo;
+    return buildIndexedGeo(new Float32Array(verts));
   }
   // Binary STL
   const triCount = dv.getUint32(80, true);
   const verts = new Float32Array(triCount * 9);
-  const norms = new Float32Array(triCount * 9);
   let off = 84;
   for (let i = 0; i < triCount; i++) {
-    const nx = dv.getFloat32(off,true), ny = dv.getFloat32(off+4,true), nz = dv.getFloat32(off+8,true);
-    off += 12;
+    off += 12; // skip face normal — we'll recompute from merged verts
     for (let v = 0; v < 3; v++) {
       const b = i*9 + v*3;
       verts[b]   = dv.getFloat32(off,true);
       verts[b+1] = dv.getFloat32(off+4,true);
       verts[b+2] = dv.getFloat32(off+8,true);
-      norms[b] = nx; norms[b+1] = ny; norms[b+2] = nz;
       off += 12;
     }
     off += 2;
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-  geo.setAttribute('normal',   new THREE.BufferAttribute(norms, 3));
-  return geo;
+  return buildIndexedGeo(verts);
 }
 
 function initCadBlock(canvasEl) {
   if (cadScenes.has(canvasEl)) return;
-  const stlPath = canvasEl.dataset.stl;
-  if (!stlPath || !window.electronAPI) return;
+  const filePath = canvasEl.dataset.stl;
+  if (!filePath || !window.electronAPI) return;
 
-  window.electronAPI.stlRead(stlPath).then(buffer => {
-    const geo = parseSTLBuffer(buffer);
+  window.electronAPI.stlRead(filePath).then(resp => {
+    // stlRead now returns { type, data: Uint8Array, mtl?: Uint8Array }
+    // Convert Uint8Array → ArrayBuffer safely regardless of byteOffset
+    const toAB  = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+    const toTxt = u8 => new TextDecoder().decode(u8);
 
-    // Center + normalize
-    geo.computeBoundingBox();
-    const box = geo.boundingBox;
-    const center = new THREE.Vector3(); box.getCenter(center);
-    const size   = new THREE.Vector3(); box.getSize(size);
+    // Parse into array of { geo, mat }
+    let primitives;
+    if (resp.type === 'obj') {
+      primitives = parseOBJ(toTxt(resp.data), resp.mtl ? toTxt(resp.mtl) : null);
+      if (!primitives) primitives = [{ geo: new THREE.BufferGeometry(),
+        mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.15, roughness: 0.65 }) }];
+    } else if (resp.type === 'glb' || resp.type === 'gltf') {
+      primitives = parseGLB(toAB(resp.data));
+    } else {
+      primitives = [{ geo: parseSTLBuffer(toAB(resp.data)),
+        mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.55, roughness: 0.35 }) }];
+    }
+
+    // Compute combined bounding box for camera framing
+    const combined = new THREE.Box3();
+    primitives.forEach(({ geo }) => {
+      geo.computeBoundingBox();
+      combined.union(geo.boundingBox);
+    });
+    const center = new THREE.Vector3(); combined.getCenter(center);
+    const size   = new THREE.Vector3(); combined.getSize(size);
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    geo.translate(-center.x, -center.y, -center.z);
+    // Translate all primitives to origin
+    primitives.forEach(({ geo }) => geo.translate(-center.x, -center.y, -center.z));
 
     const W = canvasEl.offsetWidth || 500, H = 320;
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(W, H);
-    renderer.setClearColor(0xf0f0f5);
+    renderer.setClearColor(0x000000, 0); // transparent — gradient comes from CSS
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene  = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, W / H, maxDim * 0.001, maxDim * 100);
 
-    // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(1, 2, 2); scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3); fill.position.set(-1, -1, 1); scene.add(fill);
+    // Studio lighting (F3D / Fusion 360 style)
+    scene.add(new THREE.HemisphereLight(0xdce8ff, 0x302830, 0.9));
+    const key = new THREE.DirectionalLight(0xfff8f0, 1.4); key.position.set(2, 3, 2); scene.add(key);
+    const rim = new THREE.DirectionalLight(0xc0d8ff, 0.5); rim.position.set(-3, 1, -2); scene.add(rim);
 
-    // Shaded mesh
-    const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0x4a90d9, specular: 0x222222, shininess: 40 }));
-    scene.add(mesh);
+    // Build meshes — one per primitive (GLB may have many; STL has one)
+    const meshes = primitives.map(({ geo, mat }) => {
+      const m = new THREE.Mesh(geo, mat);
+      scene.add(m);
+      return m;
+    });
 
-    // Line overlay (hidden by default)
-    const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geo, 15),
-      new THREE.LineBasicMaterial({ color: 0x111111 })
-    );
-    edges.visible = false;
-    scene.add(edges);
+    // Edge overlay (hidden by default) — one LineSegments group covering all meshes
+    const edgeGroup = new THREE.Group();
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x111111 });
+    primitives.forEach(({ geo }) => {
+      edgeGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 15), edgeMat));
+    });
+    edgeGroup.visible = false;
+    scene.add(edgeGroup);
 
     // Isometric camera position
     const dist = maxDim * 2.2;
@@ -1041,7 +1246,6 @@ function initCadBlock(canvasEl) {
     }
     updateCamera();
 
-    // Orbit mouse handler
     let drag = false, lastX = 0, lastY = 0;
     canvasEl.addEventListener('mousedown', e => { drag = true; lastX = e.clientX; lastY = e.clientY; });
     window.addEventListener('mouseup', () => { drag = false; });
@@ -1059,8 +1263,10 @@ function initCadBlock(canvasEl) {
       updateCamera();
     }, { passive: false });
 
-    cadScenes.set(canvasEl, { renderer, scene, camera, mesh, edges, sph, maxDim, updateCamera });
-  }).catch(err => console.error('STL load error:', err));
+    // Store original PBR materials for restoring after "Lines" mode
+    const shadedMats = meshes.map(m => m.material);
+    cadScenes.set(canvasEl, { renderer, scene, camera, meshes, shadedMats, edges: edgeGroup, sph, maxDim, updateCamera });
+  }).catch(err => console.error('Model load error:', err));
 }
 
 function initAllCadBlocks() {
@@ -1089,11 +1295,12 @@ function cadView(btn, view) {
 function cadMode(btn, mode) {
   const canvas = btn.closest('.block-cad').querySelector('.cad-canvas');
   const sc = cadScenes.get(canvas); if (!sc) return;
+  const wireframeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   if (mode === 'lines') {
-    sc.mesh.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    sc.meshes.forEach(m => { m.material = wireframeMat; });
     sc.edges.visible = true;
   } else {
-    sc.mesh.material = new THREE.MeshPhongMaterial({ color: 0x4a90d9, specular: 0x222222, shininess: 40 });
+    sc.meshes.forEach((m, i) => { m.material = sc.shadedMats[i]; });
     sc.edges.visible = false;
   }
   sc.renderer.render(sc.scene, sc.camera);
@@ -1173,20 +1380,20 @@ async function renderModelList() {
   }
   const models = await window.electronAPI.stlList();
   if (!models.length) {
-    list.innerHTML = '<div class="empty" style="padding:16px;font-size:12px;color:var(--t3);">No models saved yet.<br>Upload an STL to get started.</div>';
+    list.innerHTML = '<div class="empty" style="padding:16px;font-size:12px;color:var(--t3);">No models saved yet.<br>Upload an OBJ or STL to get started.</div>';
     return;
   }
   list.innerHTML = models.map(m => `
-    <div class="mdl-item" onclick="insertCadBlock(${JSON.stringify(m.path)}, ${JSON.stringify(m.name)})">
+    <div class="mdl-item" onclick='insertCadBlock(${JSON.stringify(m.path)}, ${JSON.stringify(m.name)})'>
       <span style="font-size:16px;color:var(--t3);">⬡</span>
       <span class="mdl-item-name" title="${esc(m.path)}">${esc(m.name)}</span>
-      <button class="mdl-item-del" onclick="event.stopPropagation();deleteModel(${JSON.stringify(m.name)},this)" title="Remove">✕</button>
+      <button class="mdl-item-del" onclick='event.stopPropagation();deleteModel(${JSON.stringify(m.name)},this)' title="Remove">✕</button>
     </div>`).join('');
 }
 
 async function uploadNewSTL() {
   if (!window.electronAPI) return;
-  const srcPath = await window.electronAPI.openFileDialog([{ name: 'STL Files', extensions: ['stl'] }]);
+  const srcPath = await window.electronAPI.openFileDialog([{ name: '3D Models', extensions: ['obj', 'glb', 'gltf', 'stl'] }]);
   if (!srcPath) return;
   const result = await window.electronAPI.stlSave(srcPath);
   if (result) renderModelList();
@@ -1199,7 +1406,8 @@ async function deleteModel(name, btn) {
 }
 
 function insertCadBlock(stlPath, stlName) {
-  const entry = NB.entries.find(e => e.id === NB.selEntry); if (!entry) return;
+  const entry = NB.entries.find(e => e.id === NB.selEntry);
+  if (!entry) { alert('Select a notebook entry first, then click a model to insert it.'); return; }
   entry.blocks.push({ type: 'cad', data: { stlPath, stlName } });
   save();
   renderEditor(entry);

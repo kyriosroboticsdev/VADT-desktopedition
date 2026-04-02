@@ -1278,7 +1278,7 @@ function renderSTLLibrary() {
 
 async function stlImport() {
   if (!window.electronAPI) return;
-  const filePath = await window.electronAPI.openFileDialog([{ name:'STL Files', extensions:['stl'] }]);
+  const filePath = await window.electronAPI.openFileDialog([{ name:'3D Models', extensions:['obj','stl'] }]);
   if (!filePath) return;
   stlShowLoading('Importing…');
   const result = await window.electronAPI.stlSave(filePath);
@@ -1294,7 +1294,7 @@ async function deleteSTLModel(name) {
   if (!confirm(`Delete "${name}" from your library?`)) return;
   await window.electronAPI.stlDelete(name);
   if (STL.activeModel === name) {
-    if (STL.mesh) { STL.scene.remove(STL.mesh); STL.mesh.geometry.dispose(); STL.mesh = null; }
+    if (STL.group) { STL.scene.remove(STL.group); STL.group = null; }
     STL.activeModel = null;
     document.getElementById('stlEmpty').style.display = 'flex';
     document.getElementById('stlSnapshotBtn').style.display = 'none';
@@ -1309,51 +1309,106 @@ async function loadSTLModel(filePath, name) {
   STL.activeModel = name;
   renderSTLLibrary();
   try {
-    // FIX: stl-read returns base64 — decode to ArrayBuffer before parsing
-    const b64 = await window.electronAPI.stlRead(filePath);
-    const arrayBuffer = base64ToArrayBuffer(b64);
+    const resp = await window.electronAPI.stlRead(filePath);
+    const toAB  = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+    const toTxt = u8 => new TextDecoder().decode(u8);
 
-    const geometry = STLLoader.parse(arrayBuffer);
-    geometry.computeBoundingBox();
-    geometry.computeVertexNormals();
+    // Parse into array of { geo, mat } — same approach as notebook viewer
+    let primitives;
+    if (resp.type === 'obj') {
+      primitives = stlParseOBJ(toTxt(resp.data), resp.mtl ? toTxt(resp.mtl) : null);
+    } else {
+      const geo = STLLoader.parse(toAB(resp.data));
+      geo.computeVertexNormals();
+      primitives = [{ geo, mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.55, roughness: 0.35 }) }];
+    }
 
-    // Center model on grid
-    const box = geometry.boundingBox;
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    geometry.translate(-center.x, -center.y + (box.max.y - box.min.y) / 2, -center.z);
-
-    // Auto-scale to fit viewport
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
+    // Compute combined bounding box for centering + scaling
+    const combined = new THREE.Box3();
+    primitives.forEach(({ geo }) => { geo.computeBoundingBox(); combined.union(geo.boundingBox); });
+    const center = new THREE.Vector3(); combined.getCenter(center);
+    const size = new THREE.Vector3(); combined.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const scale = 3 / maxDim;
-    geometry.scale(scale, scale, scale);
 
-    if (STL.mesh) { STL.scene.remove(STL.mesh); STL.mesh.geometry.dispose(); }
-    STL.mesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-      color: 0x6ab3ff,
-      specular: 0x333366,
-      shininess: 40,
-      side: THREE.DoubleSide,
-    }));
-    STL.mesh.castShadow = true;
-    STL.mesh.receiveShadow = true;
-    STL.scene.add(STL.mesh);
+    // Remove previous model
+    if (STL.group) STL.scene.remove(STL.group);
+    STL.group = new THREE.Group();
 
-    // Reset camera to see model
+    // Center model at origin (all axes)
+    primitives.forEach(({ geo, mat }) => {
+      geo.translate(-center.x, -center.y, -center.z);
+      geo.scale(scale, scale, scale);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      STL.group.add(mesh);
+    });
+    STL.scene.add(STL.group);
+
+    // Camera orbits model center; radius fits the scaled model with some margin
     STL.target.set(0, 0, 0);
-    STL.spherical = { theta: 0.5, phi: 1.0, radius: 5 };
+    STL.spherical = { theta: 0.5, phi: 1.0, radius: maxDim * scale * 1.8 };
     updateSTLCamera();
 
     document.getElementById('stlEmpty').style.display = 'none';
     document.getElementById('stlSnapshotBtn').style.display = '';
   } catch (err) {
-    alert('Failed to load STL: ' + err.message);
-    console.error('STL load error:', err);
+    alert('Failed to load model: ' + err.message);
+    console.error('Model load error:', err);
   } finally {
     stlHideLoading();
   }
+}
+
+// OBJ + MTL parser for the standalone CAD viewer
+function stlParseOBJ(objText, mtlText) {
+  const matMap = new Map();
+  if (mtlText) {
+    let cur = null, kd = null;
+    for (const raw of mtlText.split('\n')) {
+      const t = raw.trim();
+      if (t.startsWith('newmtl ')) {
+        if (cur !== null) matMap.set(cur, kd || [0.8,0.8,0.8]);
+        cur = t.slice(7).trim(); kd = null;
+      } else if (t.startsWith('Kd ')) {
+        const p = t.split(/\s+/); kd = [+p[1],+p[2],+p[3]];
+      }
+    }
+    if (cur !== null) matMap.set(cur, kd || [0.8,0.8,0.8]);
+  }
+  const makeMat = name => {
+    const c = matMap.get(name) || [0.72,0.74,0.78];
+    return new THREE.MeshStandardMaterial({ color: new THREE.Color(c[0],c[1],c[2]), metalness: 0.15, roughness: 0.65 });
+  };
+
+  const vPos = [], vNor = [], groups = new Map();
+  let curMat = '__default__';
+  for (const raw of objText.split('\n')) {
+    const t = raw.trim();
+    if (t.startsWith('v ') && t[1]===' ') { const p=t.split(/\s+/); vPos.push(+p[1],+p[2],+p[3]); }
+    else if (t.startsWith('vn ')) { const p=t.split(/\s+/); vNor.push(+p[1],+p[2],+p[3]); }
+    else if (t.startsWith('usemtl ')) { curMat=t.slice(7).trim(); }
+    else if (t.startsWith('f ')) {
+      if (!groups.has(curMat)) groups.set(curMat,{pos:[],nor:[]});
+      const g=groups.get(curMat);
+      const face=t.slice(2).trim().split(/\s+/).map(tok=>{const pts=tok.split('/');return{vi:(+pts[0]-1)*3,ni:pts[2]?(+pts[2]-1)*3:-1};});
+      for (let i=1;i<face.length-1;i++) for (const v of [face[0],face[i],face[i+1]]) {
+        g.pos.push(vPos[v.vi],vPos[v.vi+1],vPos[v.vi+2]);
+        if (v.ni>=0) g.nor.push(vNor[v.ni],vNor[v.ni+1],vNor[v.ni+2]);
+      }
+    }
+  }
+  const results = [];
+  for (const [name,g] of groups) {
+    if (!g.pos.length) continue;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(g.pos),3));
+    if (g.nor.length===g.pos.length) geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(g.nor),3));
+    else geo.computeVertexNormals();
+    results.push({geo, mat: makeMat(name)});
+  }
+  return results.length ? results : [{geo:new THREE.BufferGeometry(), mat:makeMat('__default__')}];
 }
 
 // ─── BASE64 DECODE HELPER ─────────────────────────────────────────────────────

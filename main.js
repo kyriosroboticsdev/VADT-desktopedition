@@ -68,8 +68,9 @@ app.on('window-all-closed', () => {
 
 // ─── IPC: FILE DIALOG ─────────────────────────────────────────────────────────
 
-ipcMain.handle('open-file-dialog', async (_event, { filters }) => {
-  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters });
+ipcMain.handle('open-file-dialog', async (event, { filters }) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0];
+  const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
   return result.filePaths[0] || null;
 });
 
@@ -138,12 +139,20 @@ ipcMain.handle('open-external', (_event, url) => {
 const modelsDir = path.join(app.getPath('userData'), 'models');
 fs.mkdirSync(modelsDir, { recursive: true });
 
-ipcMain.handle('stl-save', async (_event, srcPath) => {
+// Helper: find adjacent .mtl file for an OBJ path (same dir, same base name)
+function mtlPathFor(objPath) {
+  return objPath.replace(/\.obj$/i, '.mtl');
+}
+
+ipcMain.handle('stl-save', async (event, srcPath) => {
   const name = path.basename(srcPath);
   const dest = path.join(modelsDir, name);
-  // If name collision, ask user
+  const isObj = path.extname(srcPath).toLowerCase() === '.obj';
+  const srcMtl = isObj ? mtlPathFor(srcPath) : null;
+  const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0];
+
   if (fs.existsSync(dest)) {
-    const { response } = await dialog.showMessageBox({
+    const { response } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: ['Replace', 'Keep Both', 'Cancel'],
       title: 'File Already Exists',
@@ -155,29 +164,49 @@ ipcMain.handle('stl-save', async (_event, srcPath) => {
       const base = path.basename(name, ext);
       const ts = Date.now();
       const newName = `${base}_${ts}${ext}`;
-      fs.copyFileSync(srcPath, path.join(modelsDir, newName));
-      return { name: newName, path: path.join(modelsDir, newName) };
+      const newDest = path.join(modelsDir, newName);
+      fs.copyFileSync(srcPath, newDest);
+      if (srcMtl && fs.existsSync(srcMtl)) {
+        fs.copyFileSync(srcMtl, mtlPathFor(newDest));
+      }
+      return { name: newName, path: newDest };
     }
   }
   fs.copyFileSync(srcPath, dest);
+  if (srcMtl && fs.existsSync(srcMtl)) {
+    fs.copyFileSync(srcMtl, mtlPathFor(dest));
+  }
   return { name, path: dest };
 });
 
 ipcMain.handle('stl-list', async () => {
   if (!fs.existsSync(modelsDir)) return [];
   return fs.readdirSync(modelsDir)
-    .filter(f => f.toLowerCase().endsWith('.stl'))
+    .filter(f => /\.(stl|glb|gltf|obj)$/i.test(f))
     .map(f => ({ name: f, path: path.join(modelsDir, f) }));
 });
 
 ipcMain.handle('stl-delete', async (_event, name) => {
   const p = path.join(modelsDir, name);
   if (fs.existsSync(p)) fs.unlinkSync(p);
+  // Also remove paired .mtl if this was an OBJ
+  if (path.extname(name).toLowerCase() === '.obj') {
+    const mtl = mtlPathFor(p);
+    if (fs.existsSync(mtl)) fs.unlinkSync(mtl);
+  }
 });
 
 ipcMain.handle('stl-read', async (_event, filePath) => {
-  const buf = fs.readFileSync(filePath);
-  return buf.toString('base64');
+  const ext = path.extname(filePath).toLowerCase();
+  // Return raw Uint8Array — structured clone handles any file size, no base64 needed.
+  const data = new Uint8Array(fs.readFileSync(filePath));
+  if (ext === '.obj') {
+    const mtlPath = mtlPathFor(filePath);
+    const mtl = fs.existsSync(mtlPath) ? new Uint8Array(fs.readFileSync(mtlPath)) : null;
+    return { type: 'obj', data, mtl };
+  }
+  const type = (ext === '.glb' || ext === '.gltf') ? ext.slice(1) : 'stl';
+  return { type, data };
 });
 
 ipcMain.handle('snapshot-save', async (_event, dataUrl) => {

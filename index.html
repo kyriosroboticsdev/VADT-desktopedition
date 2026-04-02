@@ -567,12 +567,25 @@ input[type=range]{width:100%;accent-color:var(--gold);}
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="app.js"></script>
+  <script>
+  // Proxy window.electronAPI calls from the notebook iframe (preloads don't run in iframes).
+  window.addEventListener('message', async e => {
+    if (e.data?.type !== 'nb-api-req' || !window.electronAPI) return;
+    const { id, method, args } = e.data;
+    try {
+      const result = await window.electronAPI[method](...(args || []));
+      e.source.postMessage({ type: 'nb-api-res', id, result }, '*');
+    } catch (err) {
+      e.source.postMessage({ type: 'nb-api-res', id, error: err.message }, '*');
+    }
+  });
+  </script>
 
 <div id="stlPage" style="position:fixed;inset:0;background:var(--s0);z-index:160;display:none;flex-direction:column;overflow:hidden;">
   <div style="background:var(--s2);border-bottom:1px solid var(--b1);height:50px;display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;">
     <div style="font-family:var(--fd);font-weight:900;font-size:18px;">VA<em style="color:var(--gold);">DT</em> <span style="font-size:13px;font-weight:400;color:var(--t2);">CAD Viewer</span></div>
     <div class="sep"></div>
-    <button class="btn-o" onclick="stlImport()">+ Import STL</button>
+    <button class="btn-o" onclick="stlImport()">+ Import Model</button>
     <button class="btn-o" id="stlSnapshotBtn" onclick="stlSnapshot()" style="display:none;">📸 Save View</button>
     <div style="margin-left:auto;display:flex;gap:7px;">
       <button class="btn-o" onclick="closeSTLViewer()">← Back</button>
@@ -582,14 +595,14 @@ input[type=range]{width:100%;accent-color:var(--gold);}
     <!-- Model library sidebar -->
     <div style="width:200px;background:var(--s1);border-right:1px solid var(--b1);display:flex;flex-direction:column;flex-shrink:0;">
       <div style="padding:10px 12px;border-bottom:1px solid var(--b1);font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.12em;color:var(--t3);text-transform:uppercase;">Model Library</div>
-      <div style="overflow-y:auto;flex:1;" id="stlLibraryList"><div class="empty" style="padding:20px 10px;font-size:12px;">No models yet.<br>Click + Import STL</div></div>
+      <div style="overflow-y:auto;flex:1;" id="stlLibraryList"><div class="empty" style="padding:20px 10px;font-size:12px;">No models yet.<br>Click + Import Model</div></div>
     </div>
     <!-- 3D viewport -->
     <div style="flex:1;position:relative;background:#0a0a10;" id="stlViewport">
       <canvas id="stlCanvas" style="display:block;width:100%;height:100%;"></canvas>
       <div id="stlEmpty" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--t3);pointer-events:none;">
         <div style="font-size:40px;opacity:0.15;">🔩</div>
-        <p style="font-size:13px;">Import an STL file to view your robot CAD</p>
+        <p style="font-size:13px;">Import an OBJ or STL file to view your robot CAD</p>
       </div>
       <!-- Viewport controls hint -->
       <div style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
