@@ -198,13 +198,27 @@ ipcMain.handle('stl-delete', async (_event, name) => {
 
 ipcMain.handle('stl-read', async (_event, filePath) => {
   const ext = path.extname(filePath).toLowerCase();
-  // Return raw Uint8Array — structured clone handles any file size, no base64 needed.
-  const data = new Uint8Array(fs.readFileSync(filePath));
+
+  // Buffer.from(nodeBuffer) returns a Buffer backed by its own
+  // dedicated ArrayBuffer — byteOffset is always 0 and byteLength
+  // equals exactly the file size. This is what we need for IPC.
+  function safeRead(p) {
+    const raw = fs.readFileSync(p);
+    // Allocate a fresh buffer of exactly the right size
+    const copy = Buffer.allocUnsafe(raw.length);
+    raw.copy(copy);
+    // Return as Uint8Array — structured clone transfers it cleanly
+    return new Uint8Array(copy.buffer, 0, copy.length);
+  }
+
+  const data = safeRead(filePath);
+
   if (ext === '.obj') {
-    const mtlPath = mtlPathFor(filePath);
-    const mtl = fs.existsSync(mtlPath) ? new Uint8Array(fs.readFileSync(mtlPath)) : null;
+    const mtlPath = filePath.replace(/\.obj$/i, '.mtl');
+    const mtl = fs.existsSync(mtlPath) ? safeRead(mtlPath) : null;
     return { type: 'obj', data, mtl };
   }
+
   const type = (ext === '.glb' || ext === '.gltf') ? ext.slice(1) : 'stl';
   return { type, data };
 });

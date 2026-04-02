@@ -1043,70 +1043,110 @@ function parseGLB(buffer) {
 
 // OBJ + MTL parser — preserves Fusion 360's smooth normals (NURBS-tessellated)
 // so curves look accurate without any vertex merging needed.
+
 function parseOBJ(objText, mtlText) {
   // Build material map from MTL
-  const matMap = new Map(); // name → [r,g,b]
+  const matMap = new Map();
   if (mtlText) {
-    let cur = null, kd = null;
+    let cur = null, kd = null, ks = null, ns = null, d = null;
     for (const raw of mtlText.split('\n')) {
       const t = raw.trim();
       if (t.startsWith('newmtl ')) {
-        if (cur !== null) matMap.set(cur, kd || [0.8, 0.8, 0.8]);
-        cur = t.slice(7).trim(); kd = null;
+        if (cur !== null) matMap.set(cur, { kd: kd||[0.8,0.8,0.8], ks, ns, d });
+        cur = t.slice(7).trim(); kd=null; ks=null; ns=null; d=null;
       } else if (t.startsWith('Kd ')) {
-        const p = t.split(/\s+/); kd = [+p[1], +p[2], +p[3]];
+        const p=t.split(/\s+/); kd=[+p[1],+p[2],+p[3]];
+      } else if (t.startsWith('Ks ')) {
+        const p=t.split(/\s+/); ks=[+p[1],+p[2],+p[3]];
+      } else if (t.startsWith('Ns ')) {
+        ns=+t.split(/\s+/)[1];
+      } else if (t.startsWith('d ') || t.startsWith('Tr ')) {
+        d=+t.split(/\s+/)[1];
+        if (t.startsWith('Tr ')) d = 1-d; // Tr is inverse of d
       }
     }
-    if (cur !== null) matMap.set(cur, kd || [0.8, 0.8, 0.8]);
+    if (cur !== null) matMap.set(cur, { kd: kd||[0.8,0.8,0.8], ks, ns, d });
   }
+
   const makeMat = name => {
-    const c = matMap.get(name) || [0.72, 0.74, 0.78];
-    return new THREE.MeshStandardMaterial({ color: new THREE.Color(c[0], c[1], c[2]), metalness: 0.15, roughness: 0.65 });
+    const m = matMap.get(name);
+    const kd = m?.kd || [0.72, 0.74, 0.78];
+    // Convert Phong Ns (0-1000) to PBR roughness
+    const roughness = m?.ns != null ? Math.max(0.05, 1 - Math.sqrt(m.ns / 1000)) : 0.65;
+    // Estimate metalness from specular brightness
+    const ksAvg = m?.ks ? (m.ks[0]+m.ks[1]+m.ks[2])/3 : 0;
+    const metalness = Math.min(0.9, ksAvg * 0.8);
+    const opacity = m?.d ?? 1;
+    return new THREE.MeshStandardMaterial({
+      color: new THREE.Color(kd[0], kd[1], kd[2]),
+      roughness,
+      metalness,
+      opacity,
+      transparent: opacity < 1,
+      side: THREE.DoubleSide,
+    });
   };
 
-  // Parse OBJ geometry
-  const vPos = [], vNor = [];
-  const groups = new Map(); // matName → { pos:[], nor:[] }
+  // Parse OBJ
+  const vPos = [], vNor = [], vTex = [];
+  const groups = new Map(); // matName → { pos[], nor[], hasNormals }
   let curMat = '__default__';
 
   for (const raw of objText.split('\n')) {
     const t = raw.trim();
-    if (t.startsWith('v ') && t[1] === ' ') {
-      const p = t.split(/\s+/); vPos.push(+p[1], +p[2], +p[3]);
+    if (!t || t.startsWith('#')) continue;
+    if (t.startsWith('v ') && t[1]===' ') {
+      const p=t.split(/\s+/); vPos.push(+p[1],+p[2],+p[3]);
     } else if (t.startsWith('vn ')) {
-      const p = t.split(/\s+/); vNor.push(+p[1], +p[2], +p[3]);
+      const p=t.split(/\s+/); vNor.push(+p[1],+p[2],+p[3]);
+    } else if (t.startsWith('vt ')) {
+      const p=t.split(/\s+/); vTex.push(+p[1],+p[2]);
     } else if (t.startsWith('usemtl ')) {
       curMat = t.slice(7).trim();
     } else if (t.startsWith('f ')) {
-      if (!groups.has(curMat)) groups.set(curMat, { pos: [], nor: [] });
+      if (!groups.has(curMat)) groups.set(curMat, { pos:[], nor:[], hasNormals:false });
       const g = groups.get(curMat);
-      const face = t.slice(2).trim().split(/\s+/).map(tok => {
+      // Parse face tokens — handle v, v/vt, v/vt/vn, v//vn formats
+      const toks = t.slice(2).trim().split(/\s+/);
+      const face = toks.map(tok => {
         const pts = tok.split('/');
-        return { vi: (+pts[0] - 1) * 3, ni: pts[2] ? (+pts[2] - 1) * 3 : -1 };
+        const vi = (+pts[0]-1)*3;
+        const ni = (pts[2] && pts[2]!=='') ? (+pts[2]-1)*3 : -1;
+        return { vi, ni };
       });
-      // Fan triangulation for ngons
-      for (let i = 1; i < face.length - 1; i++) {
-        for (const v of [face[0], face[i], face[i + 1]]) {
-          g.pos.push(vPos[v.vi], vPos[v.vi + 1], vPos[v.vi + 2]);
-          if (v.ni >= 0) g.nor.push(vNor[v.ni], vNor[v.ni + 1], vNor[v.ni + 2]);
+      // Fan-triangulate ngons
+      for (let i=1; i<face.length-1; i++) {
+        for (const v of [face[0], face[i], face[i+1]]) {
+          g.pos.push(vPos[v.vi]??0, vPos[v.vi+1]??0, vPos[v.vi+2]??0);
+          if (v.ni >= 0) {
+            g.nor.push(vNor[v.ni]??0, vNor[v.ni+1]??0, vNor[v.ni+2]??0);
+            g.hasNormals = true;
+          } else {
+            // Push placeholder — will be overwritten by computeVertexNormals
+            g.nor.push(0, 1, 0);
+          }
         }
       }
     }
   }
+
+  console.log('[OBJ] Parsed', vPos.length/3, 'verts,', vNor.length/3, 'normals,', groups.size, 'material groups');
 
   const results = [];
   for (const [name, g] of groups) {
     if (!g.pos.length) continue;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(g.pos), 3));
-    if (g.nor.length === g.pos.length) {
-      // Use Fusion 360's pre-computed smooth normals — these come from the NURBS and
-      // already represent curved surfaces correctly, better than recomputing from mesh.
+    if (g.hasNormals && g.nor.length === g.pos.length) {
+      // Use OBJ's pre-computed normals (Fusion 360 smooth NURBS normals)
       geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(g.nor), 3));
     } else {
+      // Recompute from geometry — use indexed geometry for smooth shading
+      geo.setIndex([...Array(g.pos.length/3).keys()]);
       geo.computeVertexNormals();
     }
     results.push({ geo, mat: makeMat(name) });
+    console.log('[OBJ] Group "'+name+'" → '+g.pos.length/3+' verts, hasNormals='+g.hasNormals);
   }
   return results.length ? results : null;
 }
@@ -1162,76 +1202,119 @@ function parseSTLBuffer(buffer) {
   return buildIndexedGeo(verts);
 }
 
+function safeToText(u8) {
+  // Copy into a fresh Uint8Array to guarantee byteOffset=0
+  // before passing to TextDecoder — Node Buffer pool slices
+  // can have non-zero byteOffset which confuses some decoders.
+  const clean = new Uint8Array(u8.byteLength);
+  clean.set(u8);
+  return new TextDecoder('utf-8').decode(clean);
+}
+
+function safeToAB(u8) {
+  const clean = new Uint8Array(u8.byteLength);
+  clean.set(u8);
+  return clean.buffer;
+}
+
 function initCadBlock(canvasEl) {
   if (cadScenes.has(canvasEl)) return;
   const filePath = canvasEl.dataset.stl;
   if (!filePath || !window.electronAPI) return;
 
   window.electronAPI.stlRead(filePath).then(resp => {
-    // stlRead now returns { type, data: Uint8Array, mtl?: Uint8Array }
-    // Convert Uint8Array → ArrayBuffer safely regardless of byteOffset
-    const toAB  = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-    const toTxt = u8 => new TextDecoder().decode(u8);
+    console.log('[CAD] stlRead response type:', resp.type, 'data length:', resp.data?.byteLength);
 
-    // Parse into array of { geo, mat }
     let primitives;
-    if (resp.type === 'obj') {
-      primitives = parseOBJ(toTxt(resp.data), resp.mtl ? toTxt(resp.mtl) : null);
-      if (!primitives) primitives = [{ geo: new THREE.BufferGeometry(),
-        mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.15, roughness: 0.65 }) }];
-    } else if (resp.type === 'glb' || resp.type === 'gltf') {
-      primitives = parseGLB(toAB(resp.data));
-    } else {
-      primitives = [{ geo: parseSTLBuffer(toAB(resp.data)),
-        mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.55, roughness: 0.35 }) }];
+    try {
+      if (resp.type === 'obj') {
+        const objText = safeToText(resp.data);
+        const mtlText = resp.mtl ? safeToText(resp.mtl) : null;
+        console.log('[CAD] OBJ text length:', objText.length, '| first 80 chars:', objText.slice(0, 80));
+        console.log('[CAD] MTL available:', !!mtlText);
+        primitives = parseOBJ(objText, mtlText);
+        console.log('[CAD] parseOBJ returned', primitives?.length, 'primitives');
+      } else if (resp.type === 'glb' || resp.type === 'gltf') {
+        primitives = parseGLB(safeToAB(resp.data));
+      } else {
+        const geo = parseSTLBuffer(safeToAB(resp.data));
+        primitives = [{ geo, mat: new THREE.MeshStandardMaterial({ color: 0xb8bec8, metalness: 0.55, roughness: 0.35 }) }];
+      }
+    } catch(parseErr) {
+      console.error('[CAD] Parse error:', parseErr);
+      return;
     }
 
-    // Compute combined bounding box for camera framing
-    const combined = new THREE.Box3();
-    primitives.forEach(({ geo }) => {
-      geo.computeBoundingBox();
-      combined.union(geo.boundingBox);
+    if (!primitives || !primitives.length) {
+      console.warn('[CAD] No primitives parsed — check OBJ/MTL content');
+      return;
+    }
+
+    // Validate geometries have actual vertex data
+    primitives = primitives.filter(({ geo }) => {
+      const pos = geo.getAttribute('position');
+      const ok = pos && pos.count > 0;
+      if (!ok) console.warn('[CAD] Skipping primitive with no vertices');
+      return ok;
     });
-    const center = new THREE.Vector3(); combined.getCenter(center);
-    const size   = new THREE.Vector3(); combined.getSize(size);
+    if (!primitives.length) {
+      console.warn('[CAD] All primitives were empty after filtering');
+      return;
+    }
+
+    // Compute combined bounding box BEFORE any transforms
+    primitives.forEach(({ geo }) => geo.computeBoundingBox());
+    const combined = new THREE.Box3();
+    primitives.forEach(({ geo }) => combined.union(geo.boundingBox));
+
+    const center = new THREE.Vector3();
+    combined.getCenter(center);
+    const size = new THREE.Vector3();
+    combined.getSize(size);
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    // Translate all primitives to origin
+
+    console.log('[CAD] Bounding box center:', center, '| maxDim:', maxDim);
+
+    // Translate each primitive to origin
     primitives.forEach(({ geo }) => geo.translate(-center.x, -center.y, -center.z));
 
     const W = canvasEl.offsetWidth || 500, H = 320;
     const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(W, H);
-    renderer.setClearColor(0x000000, 0); // transparent — gradient comes from CSS
+    renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // outputColorSpace may not exist in r160 — guard it
+    if (renderer.outputColorSpace !== undefined) renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene  = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, W / H, maxDim * 0.001, maxDim * 100);
 
-    // Studio lighting (F3D / Fusion 360 style)
+    // Studio lighting
     scene.add(new THREE.HemisphereLight(0xdce8ff, 0x302830, 0.9));
-    const key = new THREE.DirectionalLight(0xfff8f0, 1.4); key.position.set(2, 3, 2); scene.add(key);
-    const rim = new THREE.DirectionalLight(0xc0d8ff, 0.5); rim.position.set(-3, 1, -2); scene.add(rim);
+    const key = new THREE.DirectionalLight(0xfff8f0, 1.4);
+    key.position.set(2, 3, 2);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0xc0d8ff, 0.5);
+    rim.position.set(-3, 1, -2);
+    scene.add(rim);
 
-    // Build meshes — one per primitive (GLB may have many; STL has one)
     const meshes = primitives.map(({ geo, mat }) => {
       const m = new THREE.Mesh(geo, mat);
       scene.add(m);
       return m;
     });
 
-    // Edge overlay (hidden by default) — one LineSegments group covering all meshes
+    // Edge overlay
     const edgeGroup = new THREE.Group();
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x111111 });
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x222222 });
     primitives.forEach(({ geo }) => {
-      edgeGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 15), edgeMat));
+      edgeGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), edgeMat));
     });
     edgeGroup.visible = false;
     scene.add(edgeGroup);
 
-    // Isometric camera position
     const dist = maxDim * 2.2;
     const sph  = { phi: Math.PI / 4, theta: Math.PI / 4, radius: dist };
 
@@ -1263,10 +1346,11 @@ function initCadBlock(canvasEl) {
       updateCamera();
     }, { passive: false });
 
-    // Store original PBR materials for restoring after "Lines" mode
     const shadedMats = meshes.map(m => m.material);
     cadScenes.set(canvasEl, { renderer, scene, camera, meshes, shadedMats, edges: edgeGroup, sph, maxDim, updateCamera });
-  }).catch(err => console.error('Model load error:', err));
+    console.log('[CAD] Scene ready with', meshes.length, 'meshes');
+
+  }).catch(err => console.error('[CAD] stlRead IPC error:', err));
 }
 
 function initAllCadBlocks() {
