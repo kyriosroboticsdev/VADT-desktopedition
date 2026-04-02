@@ -1081,6 +1081,310 @@ function pushDetectedScores(){
   if(typeof updateOverlayScore==='function')updateOverlayScore();closeCVOverlay();
 }
 
+const STLLoader = {
+  parse(buffer) {
+    // Detect ASCII vs binary
+    const isASCII = (() => {
+      const view = new DataView(buffer);
+      // Binary STL: first 80 bytes are header, bytes 80-84 are triangle count
+      const numTriangles = view.getUint32(80, true);
+      const expectedLen = 84 + numTriangles * 50;
+      if (buffer.byteLength === expectedLen) return false;
+      // Check for "solid" text header (ASCII)
+      const header = new TextDecoder().decode(new Uint8Array(buffer, 0, 5));
+      return header.toLowerCase().startsWith('solid');
+    })();
+    return isASCII ? parseASCII(new TextDecoder().decode(buffer)) : parseBinary(buffer);
+
+    function parseASCII(text) {
+      const geo = new THREE.BufferGeometry();
+      const verts = [], norms = [];
+      const lines = text.split('\n');
+      let nx=0,ny=0,nz=0;
+      for (const line of lines) {
+        const l = line.trim();
+        if (l.startsWith('facet normal')) {
+          const p = l.split(/\s+/); nx=+p[2]; ny=+p[3]; nz=+p[4];
+        } else if (l.startsWith('vertex')) {
+          const p = l.split(/\s+/);
+          verts.push(+p[1],+p[2],+p[3]);
+          norms.push(nx,ny,nz);
+        }
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(new Float32Array(norms), 3));
+      return geo;
+    }
+
+    function parseBinary(buf) {
+      const geo = new THREE.BufferGeometry();
+      const view = new DataView(buf);
+      const n = view.getUint32(80, true);
+      const verts = new Float32Array(n * 9), norms = new Float32Array(n * 9);
+      let offset = 84;
+      for (let i = 0; i < n; i++) {
+        const nx=view.getFloat32(offset,true), ny=view.getFloat32(offset+4,true), nz=view.getFloat32(offset+8,true);
+        offset += 12;
+        for (let v = 0; v < 3; v++) {
+          const base = i*9+v*3;
+          verts[base]   = view.getFloat32(offset,true);
+          verts[base+1] = view.getFloat32(offset+4,true);
+          verts[base+2] = view.getFloat32(offset+8,true);
+          norms[base]=nx; norms[base+1]=ny; norms[base+2]=nz;
+          offset += 12;
+        }
+        offset += 2; // attribute byte count
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(norms, 3));
+      return geo;
+    }
+  }
+};
+
+// ─── STL VIEWER STATE ─────────────────────────────────────────────────────────
+const STL = {
+  scene: null, camera: null, renderer: null, mesh: null,
+  animId: null, models: [],  // { name, path }
+  activeModel: null,
+  mouse: { down: false, right: false, lastX: 0, lastY: 0 },
+  spherical: { theta: 0.5, phi: 1.0, radius: 5 },
+  target: new (typeof THREE !== 'undefined' ? THREE.Vector3 : Object)(),
+};
+
+function openSTLViewer() {
+  const page = document.getElementById('stlPage');
+  if (!page) return;
+  page.style.display = 'flex';
+  if (!STL.renderer) initSTLRenderer();
+  refreshSTLLibrary();
+}
+
+function closeSTLViewer() {
+  document.getElementById('stlPage').style.display = 'none';
+  if (STL.animId) { cancelAnimationFrame(STL.animId); STL.animId = null; }
+}
+
+function initSTLRenderer() {
+  if (typeof THREE === 'undefined') {
+    console.error('Three.js not loaded — add the CDN script to index.html');
+    return;
+  }
+  const canvas = document.getElementById('stlCanvas');
+  const vp = document.getElementById('stlViewport');
+
+  STL.scene = new THREE.Scene();
+  STL.scene.background = new THREE.Color(0x0a0a10);
+
+  STL.camera = new THREE.PerspectiveCamera(45, vp.offsetWidth / vp.offsetHeight, 0.01, 1000);
+  updateSTLCamera();
+
+  STL.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  STL.renderer.setPixelRatio(window.devicePixelRatio);
+  STL.renderer.setSize(vp.offsetWidth, vp.offsetHeight);
+  STL.renderer.shadowMap.enabled = true;
+
+  // Lighting
+  const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+  const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir1.position.set(5, 10, 7);
+  dir1.castShadow = true;
+  const dir2 = new THREE.DirectionalLight(0x8888ff, 0.3);
+  dir2.position.set(-5, -3, -5);
+  STL.scene.add(ambient, dir1, dir2);
+
+  // Grid helper
+  const grid = new THREE.GridHelper(10, 20, 0x2e2e3a, 0x1c1c22);
+  STL.scene.add(grid);
+  STL.target = new THREE.Vector3();
+
+  // Mouse controls
+  canvas.addEventListener('mousedown', e => {
+    STL.mouse.down = true;
+    STL.mouse.right = e.button === 2;
+    STL.mouse.lastX = e.clientX; STL.mouse.lastY = e.clientY;
+  });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('mouseup', () => { STL.mouse.down = false; });
+  window.addEventListener('mousemove', e => {
+    if (!STL.mouse.down) return;
+    const dx = e.clientX - STL.mouse.lastX, dy = e.clientY - STL.mouse.lastY;
+    STL.mouse.lastX = e.clientX; STL.mouse.lastY = e.clientY;
+    if (STL.mouse.right) {
+      // Pan
+      const panSpeed = STL.spherical.radius * 0.001;
+      STL.target.x -= dx * panSpeed;
+      STL.target.y += dy * panSpeed;
+    } else {
+      // Orbit
+      STL.spherical.theta -= dx * 0.008;
+      STL.spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, STL.spherical.phi - dy * 0.008));
+    }
+    updateSTLCamera();
+  });
+  canvas.addEventListener('wheel', e => {
+    STL.spherical.radius = Math.max(0.5, STL.spherical.radius * (1 + e.deltaY * 0.001));
+    updateSTLCamera();
+    e.preventDefault();
+  }, { passive: false });
+
+  // Resize
+  new ResizeObserver(() => {
+    if (!STL.renderer) return;
+    STL.renderer.setSize(vp.offsetWidth, vp.offsetHeight);
+    STL.camera.aspect = vp.offsetWidth / vp.offsetHeight;
+    STL.camera.updateProjectionMatrix();
+  }).observe(vp);
+
+  stlRenderLoop();
+}
+
+function updateSTLCamera() {
+  if (!STL.camera) return;
+  const { theta, phi, radius } = STL.spherical;
+  STL.camera.position.set(
+    STL.target.x + radius * Math.sin(phi) * Math.sin(theta),
+    STL.target.y + radius * Math.cos(phi),
+    STL.target.z + radius * Math.sin(phi) * Math.cos(theta)
+  );
+  STL.camera.lookAt(STL.target);
+}
+
+function stlRenderLoop() {
+  STL.animId = requestAnimationFrame(stlRenderLoop);
+  if (STL.renderer && STL.scene && STL.camera) STL.renderer.render(STL.scene, STL.camera);
+}
+
+// ─── LIBRARY ──────────────────────────────────────────────────────────────────
+async function refreshSTLLibrary() {
+  if (!window.electronAPI?.stlList) return;
+  STL.models = await window.electronAPI.stlList();
+  renderSTLLibrary();
+}
+
+function renderSTLLibrary() {
+  const el = document.getElementById('stlLibraryList');
+  if (!el) return;
+  if (!STL.models.length) {
+    el.innerHTML = '<div class="empty" style="padding:20px 10px;font-size:12px;">No models yet.<br>Click + Import STL</div>';
+    return;
+  }
+  el.innerHTML = STL.models.map(m => `
+    <div class="stl-lib-item ${STL.activeModel===m.name?'active':''}" onclick="loadSTLModel('${m.path.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${m.name.replace(/'/g,"\\'")}')">
+      <button class="stl-lib-item-del" onclick="event.stopPropagation();deleteSTLModel('${m.name.replace(/'/g,"\\'")}')">✕</button>
+      <div class="stl-lib-item-name" title="${m.name}">${m.name}</div>
+    </div>`).join('');
+}
+
+async function stlImport() {
+  if (!window.electronAPI) return;
+  const filePath = await window.electronAPI.openFileDialog([{ name:'STL Files', extensions:['stl'] }]);
+  if (!filePath) return;
+  stlShowLoading('Importing…');
+  const result = await window.electronAPI.stlSave(filePath);
+  if (result) {
+    await refreshSTLLibrary();
+    loadSTLModel(result.path, result.name);
+  } else {
+    stlHideLoading();
+  }
+}
+
+async function deleteSTLModel(name) {
+  if (!confirm(`Delete "${name}" from your library?`)) return;
+  await window.electronAPI.stlDelete(name);
+  if (STL.activeModel === name) {
+    if (STL.mesh) { STL.scene.remove(STL.mesh); STL.mesh.geometry.dispose(); STL.mesh = null; }
+    STL.activeModel = null;
+    document.getElementById('stlEmpty').style.display = 'flex';
+    document.getElementById('stlSnapshotBtn').style.display = 'none';
+  }
+  await refreshSTLLibrary();
+}
+
+// ─── LOAD MODEL ───────────────────────────────────────────────────────────────
+async function loadSTLModel(filePath, name) {
+  if (!window.electronAPI || typeof THREE === 'undefined') return;
+  stlShowLoading('Loading model…');
+  STL.activeModel = name;
+  renderSTLLibrary();
+  try {
+    // FIX: stl-read returns base64 — decode to ArrayBuffer before parsing
+    const b64 = await window.electronAPI.stlRead(filePath);
+    const arrayBuffer = base64ToArrayBuffer(b64);
+
+    const geometry = STLLoader.parse(arrayBuffer);
+    geometry.computeBoundingBox();
+    geometry.computeVertexNormals();
+
+    // Center model on grid
+    const box = geometry.boundingBox;
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    geometry.translate(-center.x, -center.y + (box.max.y - box.min.y) / 2, -center.z);
+
+    // Auto-scale to fit viewport
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = 3 / maxDim;
+    geometry.scale(scale, scale, scale);
+
+    if (STL.mesh) { STL.scene.remove(STL.mesh); STL.mesh.geometry.dispose(); }
+    STL.mesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+      color: 0x6ab3ff,
+      specular: 0x333366,
+      shininess: 40,
+      side: THREE.DoubleSide,
+    }));
+    STL.mesh.castShadow = true;
+    STL.mesh.receiveShadow = true;
+    STL.scene.add(STL.mesh);
+
+    // Reset camera to see model
+    STL.target.set(0, 0, 0);
+    STL.spherical = { theta: 0.5, phi: 1.0, radius: 5 };
+    updateSTLCamera();
+
+    document.getElementById('stlEmpty').style.display = 'none';
+    document.getElementById('stlSnapshotBtn').style.display = '';
+  } catch (err) {
+    alert('Failed to load STL: ' + err.message);
+    console.error('STL load error:', err);
+  } finally {
+    stlHideLoading();
+  }
+}
+
+// ─── BASE64 DECODE HELPER ─────────────────────────────────────────────────────
+function base64ToArrayBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// ─── SNAPSHOT ─────────────────────────────────────────────────────────────────
+async function stlSnapshot() {
+  if (!STL.renderer || !window.electronAPI?.snapshotSave) return;
+  STL.renderer.render(STL.scene, STL.camera);
+  const dataUrl = document.getElementById('stlCanvas').toDataURL('image/png');
+  const saved = await window.electronAPI.snapshotSave(dataUrl);
+  if (saved) setSt(`Snapshot saved: ${saved}`, 'live');
+}
+
+// ─── LOADING UI ───────────────────────────────────────────────────────────────
+function stlShowLoading(msg) {
+  const el = document.getElementById('stlLoading');
+  const msgEl = document.getElementById('stlLoadingMsg');
+  if (el) { el.style.display = 'flex'; }
+  if (msgEl) msgEl.textContent = msg || 'Loading…';
+}
+function stlHideLoading() {
+  const el = document.getElementById('stlLoading');
+  if (el) el.style.display = 'none';
+}
+
 // ─── INIT ──────────────────────────────────────────────────────────────────────
 init();
 initGoogleAuth();
