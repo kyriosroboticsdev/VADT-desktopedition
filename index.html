@@ -314,6 +314,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
   <button class="btn-g" id="ldBtn" onclick="loadEvent()">Load Event</button>
   <button class="btn-o" onclick="openSettings()">Settings</button>
   <button class="btn-o" onclick="openNotebook()">Notebook</button>
+  <button class="btn-o" onclick="openSTLViewer()">CAD</button>
   <div style="display:flex;align-items:center;gap:7px;margin-left:4px;" id="authArea"><span style="font-size:12px;color:var(--t3);">Loading…</span></div>
   <div class="status-row"><div class="sdot" id="sd"></div><span id="stxt">No event loaded</span></div>
 </div>
@@ -564,6 +565,53 @@ input[type=range]{width:100%;accent-color:var(--gold);}
   <iframe id="notebookFrame" style="flex:1;width:100%;border:none;" allowfullscreen></iframe>
 </div>
 
-<script src="app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="app.js"></script>
+
+<div id="stlPage" style="position:fixed;inset:0;background:var(--s0);z-index:160;display:none;flex-direction:column;overflow:hidden;">
+  <div style="background:var(--s2);border-bottom:1px solid var(--b1);height:50px;display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;">
+    <div style="font-family:var(--fd);font-weight:900;font-size:18px;">VA<em style="color:var(--gold);">DT</em> <span style="font-size:13px;font-weight:400;color:var(--t2);">CAD Viewer</span></div>
+    <div class="sep"></div>
+    <button class="btn-o" onclick="stlImport()">+ Import STL</button>
+    <button class="btn-o" id="stlSnapshotBtn" onclick="stlSnapshot()" style="display:none;">📸 Save View</button>
+    <div style="margin-left:auto;display:flex;gap:7px;">
+      <button class="btn-o" onclick="closeSTLViewer()">← Back</button>
+    </div>
+  </div>
+  <div style="display:flex;flex:1;overflow:hidden;">
+    <!-- Model library sidebar -->
+    <div style="width:200px;background:var(--s1);border-right:1px solid var(--b1);display:flex;flex-direction:column;flex-shrink:0;">
+      <div style="padding:10px 12px;border-bottom:1px solid var(--b1);font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.12em;color:var(--t3);text-transform:uppercase;">Model Library</div>
+      <div style="overflow-y:auto;flex:1;" id="stlLibraryList"><div class="empty" style="padding:20px 10px;font-size:12px;">No models yet.<br>Click + Import STL</div></div>
+    </div>
+    <!-- 3D viewport -->
+    <div style="flex:1;position:relative;background:#0a0a10;" id="stlViewport">
+      <canvas id="stlCanvas" style="display:block;width:100%;height:100%;"></canvas>
+      <div id="stlEmpty" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--t3);pointer-events:none;">
+        <div style="font-size:40px;opacity:0.15;">🔩</div>
+        <p style="font-size:13px;">Import an STL file to view your robot CAD</p>
+      </div>
+      <!-- Viewport controls hint -->
+      <div style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
+        Left drag — rotate &nbsp;·&nbsp; Right drag — pan &nbsp;·&nbsp; Scroll — zoom
+      </div>
+      <!-- Loading indicator -->
+      <div id="stlLoading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--t1);">
+        <div style="width:36px;height:36px;border:3px solid var(--s5);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+        <span style="font-size:13px;" id="stlLoadingMsg">Loading model…</span>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+@keyframes spin{to{transform:rotate(360deg);}}
+.stl-lib-item{padding:8px 12px;cursor:pointer;border-left:3px solid transparent;transition:all 0.1s;font-size:12px;color:var(--t2);border-bottom:1px solid var(--b1);}
+.stl-lib-item:hover{background:var(--s3);color:var(--t1);}
+.stl-lib-item.active{background:var(--s3);border-left-color:var(--gold);color:var(--gold);}
+.stl-lib-item-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+.stl-lib-item-del{float:right;color:var(--t3);font-size:11px;padding:0 3px;background:none;border:none;cursor:pointer;}
+.stl-lib-item-del:hover{color:#ff7b77;}
+</style>
+  
 </body>
 </html>
