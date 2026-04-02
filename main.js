@@ -177,7 +177,7 @@ ipcMain.handle('stl-delete', async (_event, name) => {
 
 ipcMain.handle('stl-read', async (_event, filePath) => {
   const buf = fs.readFileSync(filePath);
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  return buf.toString('base64');
 });
 
 ipcMain.handle('snapshot-save', async (_event, dataUrl) => {
