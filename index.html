@@ -378,6 +378,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
   <button class="btn-o" onclick="openSettings()">Settings</button>
   <button class="btn-o" onclick="openNotebook()">Notebook</button>
   <button class="btn-o" onclick="openSTLViewer()">CAD</button>
+  <button class="btn-o" onclick="openSimulator()">Simulator</button>
   <div style="display:flex;align-items:center;gap:7px;margin-left:4px;" id="authArea"><span style="font-size:12px;color:var(--t3);">Loading…</span></div>
   <div class="status-row"><div class="sdot" id="sd"></div><span id="stxt">No event loaded</span></div>
 </div>
@@ -706,6 +707,232 @@ input[type=range]{width:100%;accent-color:var(--gold);}
 .stl-lib-item-del{float:right;color:var(--t3);font-size:11px;padding:0 3px;background:none;border:none;cursor:pointer;}
 .stl-lib-item-del:hover{color:#ff7b77;}
 </style>
+  <!-- ─── SIMULATOR PAGE ─── -->
+  <div id="simPage" style="position:fixed;inset:0;background:var(--s0);z-index:170;display:none;flex-direction:column;overflow:hidden;">
   
+    <!-- Top bar -->
+    <div style="background:var(--s2);border-bottom:1px solid var(--b1);height:50px;display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;">
+      <div style="font-family:var(--fd);font-weight:900;font-size:18px;">VA<em style="color:var(--gold);">DT</em> <span style="font-size:13px;font-weight:400;color:var(--t2);">Simulator</span></div>
+      <div class="sep"></div>
+  
+      <!-- Mode buttons -->
+      <button id="simMode_driver" class="btn-o sim-mode-btn active" onclick="simSetMode('driver')">Driver</button>
+      <button id="simMode_auton"  class="btn-o sim-mode-btn" onclick="simSetMode('auton')">Autonomous</button>
+      <button id="simMode_pid"    class="btn-o sim-mode-btn" onclick="simSetMode('pid')">PID Tuner</button>
+  
+      <div class="sep"></div>
+  
+      <!-- Match controls -->
+      <button id="simStartBtn" class="btn-o" onclick="simToggleMatch()">▶ Start</button>
+      <button class="btn-o" onclick="simResetMatch()">↺ Reset</button>
+  
+      <!-- Timer + period badge -->
+      <div id="simPeriodBadge" style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;padding:3px 8px;border-radius:4px;background:rgba(34,197,94,0.25);color:#22c55e;">AUTON</div>
+      <div id="simTimer" style="font-family:var(--fm);font-weight:700;font-size:18px;color:var(--t1);min-width:44px;">1:45</div>
+  
+      <div style="flex:1;"></div>
+  
+      <!-- Load config -->
+      <button class="btn-o" onclick="simLoadConfig()">📂 Load Config</button>
+      <button class="btn-o" onclick="simOpenAnnotation()">⚙ Annotate</button>
+      <button class="btn-o" onclick="closeSimulator()">← Back</button>
+  
+      <!-- Status -->
+      <span id="simStatus" style="font-size:11px;color:var(--t3);margin-left:6px;white-space:nowrap;">No config loaded</span>
+    </div>
+  
+    <!-- Body -->
+    <div style="display:flex;flex:1;overflow:hidden;">
+  
+      <!-- LEFT SIDEBAR — robot state + sensors -->
+      <div style="width:190px;background:var(--s1);border-right:1px solid var(--b1);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;">
+  
+        <!-- Robot state -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--b1);">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Robot State</div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">X</span><span class="sim-stat-val" id="simStatX">72.0"</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Y</span><span class="sim-stat-val" id="simStatY">72.0"</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Heading</span><span class="sim-stat-val" id="simStatH">0.0°</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Speed</span><span class="sim-stat-val" id="simStatSpd">0.0 in/s</span></div>
+        </div>
+  
+        <!-- Sensors -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--b1);">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Sensors</div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">IMU</span><span class="sim-stat-val" id="simSensorImu" style="color:var(--gold);">0.0°</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Odom X</span><span class="sim-stat-val" id="simSensorOdomX" style="color:var(--gold);">72.0"</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Odom Y</span><span class="sim-stat-val" id="simSensorOdomY" style="color:var(--gold);">72.0"</span></div>
+          <div class="sim-stat-row"><span class="sim-stat-lbl">Fwd enc</span><span class="sim-stat-val" id="simSensorEnc" style="color:var(--gold);">0</span></div>
+        </div>
+  
+        <!-- Controls hint -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--b1);">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Controls</div>
+          <div style="font-size:11px;color:var(--t2);line-height:2;">
+            <span style="font-family:var(--fm);background:var(--s4);padding:1px 5px;border-radius:3px;">W A S D</span> Drive<br>
+            <span style="font-family:var(--fm);background:var(--s4);padding:1px 5px;border-radius:3px;">I</span> Intake<br>
+            <span style="font-family:var(--fm);background:var(--s4);padding:1px 5px;border-radius:3px;">P</span> Piston 1<br>
+            <span style="font-family:var(--fm);background:var(--s4);padding:1px 5px;border-radius:3px;">↕ scroll</span> Zoom<br>
+            <span style="font-family:var(--fm);background:var(--s4);padding:1px 5px;border-radius:3px;">RMB drag</span> Pan
+          </div>
+        </div>
+  
+        <!-- PID panel (shown in PID mode) -->
+        <div id="simPidPanel" style="display:none;padding:10px 12px;border-bottom:1px solid var(--b1);">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:8px;">PID Tuner</div>
+          <div class="sim-pid-row">
+            <span class="sim-pid-lbl">kP</span>
+            <input type="range" id="simKp" min="0" max="8" step="0.1" value="1.5" oninput="simUpdatePID()" style="flex:1;">
+            <span class="sim-pid-val" id="simKpVal">1.50</span>
+          </div>
+          <div class="sim-pid-row">
+            <span class="sim-pid-lbl">kI</span>
+            <input type="range" id="simKi" min="0" max="2" step="0.01" value="0.01" oninput="simUpdatePID()" style="flex:1;">
+            <span class="sim-pid-val" id="simKiVal">0.01</span>
+          </div>
+          <div class="sim-pid-row">
+            <span class="sim-pid-lbl">kD</span>
+            <input type="range" id="simKd" min="0" max="5" step="0.1" value="0.8" oninput="simUpdatePID()" style="flex:1;">
+            <span class="sim-pid-val" id="simKdVal">0.80</span>
+          </div>
+          <canvas id="simPidCanvas" style="width:100%;height:60px;display:block;margin-top:6px;border-radius:4px;background:var(--s3);"></canvas>
+          <div id="simPidStatus" style="font-size:10px;color:var(--t2);margin-top:4px;">Awaiting input…</div>
+          <div style="margin-top:8px;">
+            <div style="font-size:11px;color:var(--t3);margin-bottom:3px;">Target heading (°)</div>
+            <div style="display:flex;gap:5px;align-items:center;">
+              <input type="number" id="simPidTarget" value="90" min="-360" max="360"
+                style="width:60px;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:3px 6px;border-radius:4px;outline:none;"
+                oninput="simSetPIDTarget()"/>
+              <button class="btn-o" style="font-size:11px;padding:3px 8px;" onclick="simSetPIDTarget()">Set</button>
+            </div>
+          </div>
+        </div>
+  
+        <!-- Autonomous panel -->
+        <div id="simAutonPanel" style="display:none;padding:10px 12px;">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Autonomous</div>
+          <div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.6;">Press ▶ Start to run the demo routine. Full scripting coming soon.</div>
+          <button class="btn-o" style="width:100%;font-size:11px;" onclick="simRunAuton()">▶ Run Routine</button>
+        </div>
+      </div>
+  
+      <!-- CENTER — 3D viewport -->
+      <div style="flex:1;position:relative;background:#08080b;" id="simViewport">
+        <canvas id="simCanvas" style="display:block;width:100%;height:100%;" tabindex="0"></canvas>
+  
+        <!-- Empty state -->
+        <div id="simEmpty" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--t3);pointer-events:none;">
+          <div style="font-size:40px;opacity:0.15;">🤖</div>
+          <p style="font-size:13px;">Click <strong style="color:var(--t2);">Load Config</strong> to open a robot simulation folder</p>
+          <p style="font-size:11px;opacity:0.6;">Or drive the placeholder robot with WASD</p>
+        </div>
+  
+        <!-- Viewport hint -->
+        <div style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
+          Left drag — orbit &nbsp;·&nbsp; Right drag — pan &nbsp;·&nbsp; Scroll — zoom
+        </div>
+      </div>
+  
+      <!-- RIGHT SIDEBAR — config + odom -->
+      <div style="width:210px;background:var(--s1);border-left:1px solid var(--b1);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;">
+  
+        <!-- Robot config panel -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--b1);">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Robot Config</div>
+          <div id="simConfigContent" style="font-size:12px;color:var(--t2);">No config loaded — click 📂 Load Config</div>
+        </div>
+  
+        <!-- Odometry config -->
+        <div style="padding:10px 12px;">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.13em;color:var(--t3);text-transform:uppercase;margin-bottom:7px;">Odometry</div>
+          <div id="simOdomConfig"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ─── ANNOTATION MODAL ─── -->
+  <div id="simAnnotationModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:200;display:none;align-items:center;justify-content:center;">
+    <div style="background:var(--s2);border:1px solid var(--b2);border-radius:14px;width:500px;max-width:95vw;padding:24px 26px;box-shadow:0 20px 50px rgba(0,0,0,0.5);">
+      <div style="font-family:var(--fd);font-weight:900;font-size:20px;margin-bottom:4px;">⚙ Robot Annotation</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:18px;">Tag meshes from your OBJ to define motors, pistons, and drivetrain.</div>
+  
+      <!-- Drivetrain -->
+      <div style="margin-bottom:16px;">
+        <div style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--t2);text-transform:uppercase;margin-bottom:8px;">Drivetrain</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div>
+            <label style="font-size:11px;color:var(--t3);">Type</label>
+            <select id="annDriveType" style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:5px 7px;border-radius:4px;margin-top:3px;">
+              <option value="tank">Tank</option>
+              <option value="x-drive">X-Drive</option>
+              <option value="mecanum">Mecanum</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--t3);">Wheel Ø (in)</label>
+            <input type="number" id="annWheelDia" value="3.25" step="0.25" style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:5px 7px;border-radius:4px;margin-top:3px;outline:none;"/>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--t3);">Max RPM</label>
+            <input type="number" id="annMaxRpm" value="450" style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:5px 7px;border-radius:4px;margin-top:3px;outline:none;"/>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--t3);">Track Width (in)</label>
+            <input type="number" id="annTrackWidth" value="12" style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:5px 7px;border-radius:4px;margin-top:3px;outline:none;"/>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--t3);">Robot Width (in)</label>
+            <input type="number" id="annRobotWidth" value="15" style="width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);font-size:12px;padding:5px 7px;border-radius:4px;margin-top:3px;outline:none;"/>
+          </div>
+        </div>
+      </div>
+  
+      <!-- Motors -->
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--t2);text-transform:uppercase;">Motors</div>
+          <button class="btn-o" style="font-size:11px;padding:3px 8px;" onclick="annAddMotor()">+ Add</button>
+        </div>
+        <div id="annMotorList" style="display:flex;flex-direction:column;gap:5px;"></div>
+      </div>
+  
+      <!-- Pistons -->
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--t2);text-transform:uppercase;">Pistons</div>
+          <button class="btn-o" style="font-size:11px;padding:3px 8px;" onclick="annAddPiston()">+ Add</button>
+        </div>
+        <div id="annPistonList" style="display:flex;flex-direction:column;gap:5px;"></div>
+      </div>
+  
+      <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--b1);">
+        <button onclick="simCloseAnnotation()" style="background:transparent;border:1px solid var(--b2);color:var(--t2);font-family:var(--fb);font-size:13px;padding:7px 16px;border-radius:var(--r);cursor:pointer;">Cancel</button>
+        <button onclick="annSave()" style="background:var(--gold);color:#1a1200;font-family:var(--fd);font-size:14px;font-weight:700;letter-spacing:0.06em;padding:7px 20px;border:none;border-radius:var(--r);cursor:pointer;">Save Config</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ─── SIMULATOR STYLES ─── -->
+  <style>
+    .sim-mode-btn.active { background: var(--blue); color: #E6F1FB; border-color: var(--blue); }
+    .sim-stat-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+    .sim-stat-lbl { font-size:11px; color:var(--t3); }
+    .sim-stat-val { font-size:12px; font-weight:600; font-family:var(--fm); color:var(--t1); }
+    .sim-pid-row  { display:flex; align-items:center; gap:5px; margin-bottom:6px; }
+    .sim-pid-lbl  { font-size:12px; color:var(--t2); width:18px; }
+    .sim-pid-val  { font-size:10px; font-family:var(--fm); color:var(--t1); min-width:30px; text-align:right; }
+    .sim-config-section { margin-bottom:10px; }
+    .sim-config-label   { font-size:10px; font-family:var(--fd); font-weight:700; letter-spacing:0.1em; color:var(--t3); text-transform:uppercase; margin-bottom:5px; }
+    .sim-config-row     { display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--t2); margin-bottom:4px; gap:6px; }
+    .sim-piston-btn     { font-size:11px; padding:2px 8px; border-radius:4px; border:1px solid var(--b2); background:transparent; color:var(--t1); cursor:pointer; }
+    .sim-piston-btn:hover { background:var(--s4); }
+    .ann-motor-row, .ann-piston-row { display:grid; grid-template-columns:80px 1fr 60px 28px; gap:5px; align-items:center; }
+    .ann-input { background:var(--s3); border:1px solid var(--b2); color:var(--t1); font-size:11px; padding:3px 6px; border-radius:4px; outline:none; width:100%; }
+    .ann-input:focus { border-color:var(--gold); }
+    .ann-del { background:transparent; border:none; color:var(--t3); font-size:14px; cursor:pointer; padding:0; }
+    .ann-del:hover { color:#ff7b77; }
+  </style>
+  <script src="simulator.js"></script>
 </body>
 </html>

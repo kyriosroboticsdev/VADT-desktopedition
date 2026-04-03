@@ -5,3 +5,5 @@ manual_array.js
 PushBack3.0.pdf
 *.log
 .DS_Store
+
+out/

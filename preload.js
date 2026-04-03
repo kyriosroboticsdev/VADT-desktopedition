@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stlDelete: (name)     => ipcRenderer.invoke('stl-delete', name),
   stlRead:   (filePath) => ipcRenderer.invoke('stl-read', filePath),
   snapshotSave: (dataUrl) => ipcRenderer.invoke('snapshot-save', dataUrl),
+  simLoadConfig: ()         => ipcRenderer.invoke('sim:loadConfig'),
+  simSaveConfig: (config)   => ipcRenderer.invoke('sim:saveConfig', config),
+
 
   openExternal: (url) =>
     ipcRenderer.invoke('open-external', url),

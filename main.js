@@ -370,3 +370,49 @@ ipcMain.handle('google-auth', async (event, authUrl) => {
     });
   });
 });
+
+const { ipcMain, dialog } = require('electron');
+const fs   = require('fs');
+const path = require('path');
+ 
+// Where simulation configs are stored — one folder per robot
+const SIM_DIR = path.join(app.getPath('userData'), 'simconfigs');
+if (!fs.existsSync(SIM_DIR)) fs.mkdirSync(SIM_DIR, { recursive: true });
+ 
+// Load a simulation.json — opens a file picker so the user selects their robot folder
+ipcMain.handle('sim:loadConfig', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Open simulation.json',
+    filters: [{ name: 'Simulation Config', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+ 
+  const filePath = result.filePaths[0];
+  try {
+    const raw  = fs.readFileSync(filePath, 'utf8');
+    const config = JSON.parse(raw);
+    // Resolve OBJ path relative to the config file's folder if it's relative
+    if (config.objPath && !path.isAbsolute(config.objPath)) {
+      config.objPath = path.resolve(path.dirname(filePath), config.objPath);
+    }
+    if (config.mtlPath && !path.isAbsolute(config.mtlPath)) {
+      config.mtlPath = path.resolve(path.dirname(filePath), config.mtlPath);
+    }
+    return config;
+  } catch (e) {
+    return null;
+  }
+});
+ 
+// Save a simulation.json — opens a save dialog
+ipcMain.handle('sim:saveConfig', async (event, config) => {
+  const result = await dialog.showSaveDialog({
+    title: 'Save simulation.json',
+    defaultPath: path.join(SIM_DIR, 'simulation.json'),
+    filters: [{ name: 'Simulation Config', extensions: ['json'] }],
+  });
+  if (result.canceled || !result.filePath) return false;
+  fs.writeFileSync(result.filePath, JSON.stringify(config, null, 2), 'utf8');
+  return true;
+});
