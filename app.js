@@ -663,6 +663,7 @@ function enterApp(section) {
 }
 function openNotebook(){const p=document.getElementById('notebookPage'),f=document.getElementById('notebookFrame');if(!f.src)f.src='notebook.html';p.style.display='flex';}
 function closeNotebook(){document.getElementById('notebookPage').style.display='none';}
+function navigateTo(section){closeNotebook();closeSTLViewer();closeSimulator();if(section==='notebook')openNotebook();else if(section==='cad')openSTLViewer();else if(section==='simulator')openSimulator();}
 function renderTeamPage(teamId){
   const rank=S.rankings.find(r=>Number(r.team?.id)===Number(teamId));
   seasonDataLoaded=false;activeTab='event';

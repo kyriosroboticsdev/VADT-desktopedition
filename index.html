@@ -663,7 +663,10 @@ input[type=range]{width:100%;accent-color:var(--gold);}
     <button class="btn-o" id="stlOrientBtn" onclick="stlToggleReorient()" style="display:none;">⟳ Reorient</button>
     <button class="btn-o" id="stlConfigBtn" onclick="stlToggleConfigPanel()" style="display:none;">⚙ Config</button>
     <div style="margin-left:auto;display:flex;gap:7px;">
-      <button class="btn-o" onclick="closeSTLViewer()">← Back</button>
+      <button class="btn-o" onclick="navigateTo('scouting')">Scouting</button>
+      <button class="btn-o" onclick="navigateTo('notebook')">Notebook</button>
+      <button class="btn-o" style="border-color:var(--gold);color:var(--gold);">CAD</button>
+      <button class="btn-o" onclick="navigateTo('simulator')">Simulator</button>
     </div>
   </div>
   <div style="display:flex;flex:1;overflow:hidden;">
@@ -841,7 +844,10 @@ input[type=range]{width:100%;accent-color:var(--gold);}
       <!-- Load config -->
       <button class="btn-o" onclick="simLoadConfig()">📂 Load Config</button>
       <button class="btn-o" onclick="simOpenAnnotation()">⚙ Annotate</button>
-      <button class="btn-o" onclick="closeSimulator()">← Back</button>
+      <button class="btn-o" onclick="navigateTo('scouting')">Scouting</button>
+      <button class="btn-o" onclick="navigateTo('notebook')">Notebook</button>
+      <button class="btn-o" onclick="navigateTo('cad')">CAD</button>
+      <button class="btn-o" style="border-color:var(--gold);color:var(--gold);">Simulator</button>
   
       <!-- Status -->
       <span id="simStatus" style="font-size:11px;color:var(--t3);margin-left:6px;white-space:nowrap;">No config loaded</span>

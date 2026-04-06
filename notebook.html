@@ -319,8 +319,11 @@ body{background:var(--s0);color:var(--t1);font-family:var(--fb);font-size:14px;l
   <span style="font-size:12px;color:var(--t2);" id="teamLabel">Engineering Notebook</span>
   <div style="margin-left:auto;display:flex;gap:7px;">
     <button class="btn-o" onclick="openNewEntry()">+ New Entry</button>
-    <button class="btn-o" onclick="showTab('export')">Export ↓</button>
-    <button class="btn-o" onclick="if(window.parent!==window){window.parent.closeNotebook();}else{window.location.href='index.html';}">← Back to Scouting</button>
+    <button class="btn-o" onclick="showSection('export')">Export ↓</button>
+    <button class="btn-o" onclick="if(window.parent!==window){window.parent.navigateTo('scouting');}else{window.location.href='index.html';}">Scouting</button>
+    <button class="btn-o" style="border-color:var(--gold);color:var(--gold);">Notebook</button>
+    <button class="btn-o" onclick="if(window.parent!==window){window.parent.navigateTo('cad');}else{window.location.href='index.html';}">CAD</button>
+    <button class="btn-o" onclick="if(window.parent!==window){window.parent.navigateTo('simulator');}else{window.location.href='index.html';}">Simulator</button>
   </div>
 </div>
 
