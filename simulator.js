@@ -168,7 +168,10 @@ function initSimRenderer() {
 
   // Keyboard
   canvas.setAttribute('tabindex', '0');
-  canvas.addEventListener('keydown', e => { SIM.keys[e.key.toLowerCase()] = true; });
+  canvas.addEventListener('keydown', e => {
+    SIM.keys[e.key.toLowerCase()] = true;
+    if (e.key === ' ') { simKeyTogglePistons(); e.preventDefault(); }
+  });
   canvas.addEventListener('keyup',   e => { SIM.keys[e.key.toLowerCase()] = false; });
 
   // Gamepad
@@ -255,13 +258,55 @@ function buildField() {
     SIM.scene.add(hLine, vLine);
   }
 
-  // Center line
-  const centerMat = new THREE.LineBasicMaterial({ color: 0x888800, transparent: true, opacity: 0.6 });
-  const centerLine = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(FW/2, 0.02, 0), new THREE.Vector3(FW/2, 0.02, FW)]),
-    centerMat
+  // ── Push Back: alliance corner zones (24"×24" colored tiles) ──────────────
+  const cornerSize = inToWorld(24);
+  const corners = [
+    { x: 0,              z: 0,              color: 0x4a1010 }, // red near-left
+    { x: FW - cornerSize, z: 0,              color: 0x4a1010 }, // red near-right
+    { x: 0,              z: FW - cornerSize, color: 0x102040 }, // blue far-left
+    { x: FW - cornerSize, z: FW - cornerSize, color: 0x102040 }, // blue far-right
+  ];
+  corners.forEach(c => {
+    const tile = new THREE.Mesh(
+      new THREE.PlaneGeometry(cornerSize, cornerSize),
+      new THREE.MeshStandardMaterial({ color: c.color, roughness: 0.95 })
+    );
+    tile.rotation.x = -Math.PI / 2;
+    tile.position.set(c.x + cornerSize / 2, 0.005, c.z + cornerSize / 2);
+    SIM.scene.add(tile);
+  });
+
+  // ── Push Back: center barrier (runs full width at z = 72") ────────────────
+  const barrierW = inToWorld(FIELD_IN);
+  const barrierH = inToWorld(3.5);
+  const barrierD = inToWorld(2);
+  const barrier = new THREE.Mesh(
+    new THREE.BoxGeometry(barrierW, barrierH, barrierD),
+    new THREE.MeshStandardMaterial({ color: 0x888898, metalness: 0.4, roughness: 0.5 })
   );
-  SIM.scene.add(centerLine);
+  barrier.position.set(FW / 2, barrierH / 2, FW / 2);
+  barrier.castShadow = true;
+  SIM.scene.add(barrier);
+
+  // ── Push Back: scoring troughs along each wall (6" deep colored strips) ───
+  const troughDepth  = inToWorld(6);
+  const troughHeight = inToWorld(0.5);
+  const troughMats = {
+    red:  new THREE.MeshStandardMaterial({ color: 0x6a1a1a, roughness: 0.9 }),
+    blue: new THREE.MeshStandardMaterial({ color: 0x1a2a5a, roughness: 0.9 }),
+  };
+  const troughs = [
+    { x: FW/2, z: troughDepth/2,    w: FW, d: troughDepth, mat: troughMats.red  },
+    { x: FW/2, z: FW-troughDepth/2, w: FW, d: troughDepth, mat: troughMats.blue },
+    { x: troughDepth/2,    z: FW/2, w: troughDepth, d: FW, mat: troughMats.red  },
+    { x: FW-troughDepth/2, z: FW/2, w: troughDepth, d: FW, mat: troughMats.blue },
+  ];
+  troughs.forEach(t => {
+    const trough = new THREE.Mesh(new THREE.PlaneGeometry(t.w, t.d), t.mat);
+    trough.rotation.x = -Math.PI / 2;
+    trough.position.set(t.x, 0.004, t.z);
+    SIM.scene.add(trough);
+  });
 }
 
 // ─── DEFAULT ROBOT (placeholder before OBJ is loaded) ─────────────────────────
@@ -294,7 +339,7 @@ function simPositionRobotMesh() {
   SIM.group.rotation.y = -SIM.robot.angle * Math.PI / 180;
 }
 
-// ─── GAME OBJECTS — HIGH STAKES SEASON ───────────────────────────────────────
+// ─── GAME OBJECTS — PUSH BACK 2025-26 ────────────────────────────────────────
 function loadDefaultGameObjects() {
   // Clear existing
   while (SIM.gameObjectsGroup.children.length) {
@@ -302,62 +347,52 @@ function loadDefaultGameObjects() {
   }
   SIM.gameObjects = [];
 
-  // Mobile goals (5 total for High Stakes)
-  const goalPositions = [
-    { x: 24, y: 24 }, { x: 120, y: 24 },
-    { x: 24, y: 120 }, { x: 120, y: 120 },
-    { x: 72, y: 72 },
-  ];
-  const goalMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.5, roughness: 0.4 });
-  goalPositions.forEach(pos => {
-    const goal = new THREE.Mesh(
-      new THREE.CylinderGeometry(inToWorld(4.5), inToWorld(5), inToWorld(14), 16),
-      goalMat
-    );
-    goal.position.set(inToWorld(pos.x), inToWorld(7), inToWorld(pos.y));
-    goal.castShadow = true;
-    SIM.gameObjectsGroup.add(goal);
-    SIM.gameObjects.push({ type: 'goal', x: pos.x, y: pos.y, mesh: goal, rings: 0 });
+  // Push Back uses 4" foam balls as the only game object.
+  // Standard starting layout: 3 rows of 6 balls on each side of the center barrier,
+  // plus 4 balls stacked against the near walls (in the troughs).
+  const ballRadius = inToWorld(2); // 4" diameter
+  const ballMat = new THREE.MeshStandardMaterial({ color: 0xdde8f0, roughness: 0.6, metalness: 0.05 });
+
+  // Red side (z < 72): rows at z = 20, 36, 56
+  // Blue side (z > 72): rows at z = 88, 108, 124
+  const rowsRed  = [20, 36, 56];
+  const rowsBlue = [88, 108, 124];
+  const cols = [24, 48, 72, 96, 120]; // x positions
+
+  [...rowsRed, ...rowsBlue].forEach(fy => {
+    cols.forEach(fx => {
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(ballRadius, 12, 8),
+        ballMat.clone()
+      );
+      ball.position.set(inToWorld(fx), ballRadius, inToWorld(fy));
+      ball.castShadow = true;
+      SIM.gameObjectsGroup.add(ball);
+      SIM.gameObjects.push({ type: 'ball', x: fx, y: fy, mesh: ball, scored: false });
+    });
   });
 
-  // Rings (donut shaped — approximated with torus)
-  const ringPositions = [
-    {x:36,y:36},{x:108,y:36},{x:36,y:108},{x:108,y:108},
-    {x:72,y:24},{x:72,y:120},{x:24,y:72},{x:120,y:72},
-    {x:48,y:72},{x:96,y:72},{x:72,y:48},{x:72,y:96},
+  // 4 pre-loaded balls in the troughs (near each wall center)
+  const troughBalls = [
+    { x: 72, y:  4 }, { x: 72, y: 140 },
+    { x:  4, y: 72 }, { x: 140, y:  72 },
   ];
-  const ringMat = new THREE.MeshStandardMaterial({ color: 0xe8601c, roughness: 0.7 });
-  ringPositions.forEach(pos => {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(inToWorld(3.5), inToWorld(1), 8, 16),
-      ringMat
+  troughBalls.forEach(pos => {
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(ballRadius, 12, 8),
+      ballMat.clone()
     );
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(inToWorld(pos.x), inToWorld(1.5), inToWorld(pos.y));
-    ring.castShadow = true;
-    SIM.gameObjectsGroup.add(ring);
-    SIM.gameObjects.push({ type: 'ring', x: pos.x, y: pos.y, mesh: ring, collected: false });
-  });
-
-  // Wall stakes (2 per alliance, red and blue)
-  const stakeMat_r = new THREE.MeshStandardMaterial({ color: 0xe8302a, metalness: 0.6 });
-  const stakeMat_b = new THREE.MeshStandardMaterial({ color: 0x1a7ddf, metalness: 0.6 });
-  [
-    { x: 0,   y: 72, mat: stakeMat_r },
-    { x: 144, y: 72, mat: stakeMat_b },
-  ].forEach(s => {
-    const stake = new THREE.Mesh(
-      new THREE.CylinderGeometry(inToWorld(1.5), inToWorld(1.5), inToWorld(20), 8),
-      s.mat
-    );
-    stake.position.set(inToWorld(s.x), inToWorld(10), inToWorld(s.y));
-    SIM.gameObjectsGroup.add(stake);
+    ball.position.set(inToWorld(pos.x), ballRadius, inToWorld(pos.y));
+    ball.castShadow = true;
+    SIM.gameObjectsGroup.add(ball);
+    SIM.gameObjects.push({ type: 'ball', x: pos.x, y: pos.y, mesh: ball, scored: true });
   });
 }
 
 // ─── PHYSICS TICK ─────────────────────────────────────────────────────────────
 const DRIVE_SPEED   = 48;  // inches per second (roughly 600RPM 3.25" wheel)
-const TURN_RATE     = 140; // degrees per second
+const TURN_RATE     = 300; // degrees per second
+const TURN_SLEW     = 60;  // deg/s per tick (separate from linear slew so turns feel snappy)
 const FRICTION      = 0.82;
 const SLEW_RATE     = 0.18; // max delta per tick (motor inertia)
 const TICK_DT       = 0.016;
@@ -372,12 +407,13 @@ function simPhysicsTick() {
   }
   // Autonomous mode moves are handled by the auton script runner
 
-  // Apply slew rate (motor inertia)
-  const slew = (cur, tgt) => cur + Math.sign(tgt - cur) * Math.min(Math.abs(tgt - cur), SLEW_RATE * DRIVE_SPEED);
+  // Apply slew rate (motor inertia) — linear and angular use separate ramps
+  const slewLin = (cur, tgt) => cur + Math.sign(tgt - cur) * Math.min(Math.abs(tgt - cur), SLEW_RATE * DRIVE_SPEED);
+  const slewRot = (cur, tgt) => cur + Math.sign(tgt - cur) * Math.min(Math.abs(tgt - cur), TURN_SLEW);
 
-  SIM.robot.vx    = slew(SIM.robot.vx, _targetVx) * FRICTION;
-  SIM.robot.vy    = slew(SIM.robot.vy, _targetVy) * FRICTION;
-  SIM.robot.omega = slew(SIM.robot.omega, _targetOmega) * 0.78;
+  SIM.robot.vx    = slewLin(SIM.robot.vx, _targetVx) * FRICTION;
+  SIM.robot.vy    = slewLin(SIM.robot.vy, _targetVy) * FRICTION;
+  SIM.robot.omega = slewRot(SIM.robot.omega, _targetOmega) * 0.78;
 
   // Clamp velocity
   const maxV = DRIVE_SPEED;
@@ -426,16 +462,40 @@ function processDriverInput() {
   if (k['d'] || k['arrowright']) turn  =  TURN_RATE;
 
   // Gamepad (if connected)
+  let intakeVoltage = 0;
   if (SIM.gamepad !== null) {
     const gp = navigator.getGamepads()[SIM.gamepad];
     if (gp) {
       const lx = deadband(gp.axes[0], 0.12);
       const ly = deadband(gp.axes[1], 0.12);
       const rx = deadband(gp.axes[2], 0.12);
-      fwd   = -ly * DRIVE_SPEED;
-      strafe = lx * DRIVE_SPEED;
-      turn   = rx * TURN_RATE;
+      fwd    = -ly * DRIVE_SPEED;
+      strafe =  lx * DRIVE_SPEED;
+      turn   =  rx * TURN_RATE;
+      // R2/L2 drive intake (axes[5]/axes[4] on most controllers; fallback to buttons)
+      const r2 = gp.buttons[7] ? gp.buttons[7].value : Math.max(0, (gp.axes[5] ?? -1) + 1) / 2;
+      const l2 = gp.buttons[6] ? gp.buttons[6].value : Math.max(0, (gp.axes[4] ?? -1) + 1) / 2;
+      intakeVoltage = (r2 - l2) * 100;
     }
+  }
+
+  // Keyboard intake (R = forward, F = reverse)
+  if (k['r']) intakeVoltage =  100;
+  if (k['f']) intakeVoltage = -100;
+
+  // Drive intake-role motors
+  if (SIM.config?.motors) {
+    SIM.config.motors.forEach(m => {
+      if (m.role === 'intake') {
+        if (!SIM.motors[m.id]) SIM.motors[m.id] = { voltage: 0 };
+        SIM.motors[m.id].voltage = intakeVoltage;
+        // Keep the slider in sync
+        const slider = document.getElementById('mv_slider_' + m.id);
+        const label  = document.getElementById('mv_' + m.id);
+        if (slider) slider.value = intakeVoltage;
+        if (label)  label.textContent = intakeVoltage + '%';
+      }
+    });
   }
 
   _targetVx    = Math.sin(rad) * fwd + Math.cos(rad) * strafe;
@@ -518,9 +578,16 @@ async function simLoadOBJ(objPath, mtlPath) {
   const resp = await window.electronAPI.stlRead(objPath);
   if (!resp) return;
 
-  // Remove previous robot mesh children
+  // Remove previous robot mesh children and reset scale
   while (SIM.group.children.length) SIM.group.remove(SIM.group.children[0]);
+  SIM.group.scale.set(1, 1, 1);
   SIM.meshMap = {};
+
+  // Inner group: holds CAD orientation (rotation + Y offset from the viewer).
+  // The outer SIM.group handles field position and heading every tick — keeping
+  // them separate means reorientation is never overwritten by the physics loop.
+  const orientGroup = new THREE.Group();
+  SIM.group.add(orientGroup);
 
   if (resp.type === 'obj-geo') {
     resp.groups.forEach((g, i) => {
@@ -536,21 +603,32 @@ async function simLoadOBJ(objPath, mtlPath) {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = true;
       mesh.name = g.name || `group_${i}`;
-      SIM.group.add(mesh);
+      orientGroup.add(mesh);
       SIM.meshMap[mesh.name] = mesh;
     });
   }
 
-  // Scale to robot size from config
+  // Scale orient group to robot size from config
   const rb = SIM.config?.drivetrain;
   if (rb) {
-    const box = new THREE.Box3().setFromObject(SIM.group);
+    const box = new THREE.Box3().setFromObject(orientGroup);
     const size = new THREE.Vector3(); box.getSize(size);
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const targetSize = inToWorld(rb.robotWidth || 15);
     const s = targetSize / maxDim;
-    SIM.group.scale.set(s, s, s);
+    orientGroup.scale.set(s, s, s);
   }
+
+  // Restore the CAD viewer's saved orientation so the model faces the right way
+  const modelName = objPath.split(/[\\/]/).pop();
+  try {
+    const raw = localStorage.getItem('stl_orient_' + modelName);
+    if (raw) {
+      const d = JSON.parse(raw);
+      orientGroup.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
+      orientGroup.position.y = d.py || 0;
+    }
+  } catch {}
 
   simPositionRobotMesh();
   simSetStatus('OBJ loaded');
@@ -767,9 +845,9 @@ function simRenderConfigPanel() {
       <div class="sim-config-label">Motors (${c.motors.length})</div>
       ${c.motors.map(m => `
         <div class="sim-config-row">
-          <span>${m.id}</span>
-          <input type="range" min="-100" max="100" value="0" step="1"
-            style="width:70px;"
+          <span style="flex:1;">${m.id}${m.role && m.role!=='drive' ? ` <span style="font-size:9px;color:var(--t3);">[${m.role}]</span>` : ''}</span>
+          <input id="mv_slider_${m.id}" type="range" min="-100" max="100" value="0" step="1"
+            style="width:60px;"
             oninput="SIM.motors['${m.id}'].voltage=+this.value;document.getElementById('mv_${m.id}').textContent=this.value+'%'"/>
           <span id="mv_${m.id}" style="font-size:10px;min-width:32px;text-align:right;font-family:var(--fm);">0%</span>
         </div>`).join('')}
@@ -779,8 +857,8 @@ function simRenderConfigPanel() {
       <div class="sim-config-label">Pistons (${c.pistons.length})</div>
       ${c.pistons.map(p => `
         <div class="sim-config-row">
-          <span>${p.id}</span>
-          <button class="sim-piston-btn" onclick="simTogglePiston('${p.id}',this)">Extend</button>
+          <span style="flex:1;">${p.id}</span>
+          <button id="piston_btn_${p.id}" class="sim-piston-btn" onclick="simTogglePiston('${p.id}',this)">Extend</button>
         </div>`).join('')}
     </div>` : ''}
     ${(c.sensors||[]).length ? `
@@ -794,8 +872,23 @@ function simRenderConfigPanel() {
 function simTogglePiston(id, btn) {
   if (!SIM.pistons[id]) SIM.pistons[id] = { extended: false };
   SIM.pistons[id].extended = !SIM.pistons[id].extended;
-  btn.textContent = SIM.pistons[id].extended ? 'Retract' : 'Extend';
-  btn.style.background = SIM.pistons[id].extended ? 'rgba(26,125,223,0.3)' : '';
+  const extended = SIM.pistons[id].extended;
+  // Update the button that was clicked (if any)
+  if (btn) {
+    btn.textContent = extended ? 'Retract' : 'Extend';
+    btn.style.background = extended ? 'rgba(26,125,223,0.3)' : '';
+  }
+  // Also update any other rendered button for this piston
+  const b2 = document.getElementById('piston_btn_' + id);
+  if (b2 && b2 !== btn) {
+    b2.textContent = extended ? 'Retract' : 'Extend';
+    b2.style.background = extended ? 'rgba(26,125,223,0.3)' : '';
+  }
+}
+
+function simKeyTogglePistons() {
+  if (!SIM.config?.pistons?.length) return;
+  SIM.config.pistons.forEach(p => simTogglePiston(p.id, null));
 }
 
 // ─── PID CONTROLS ─────────────────────────────────────────────────────────────

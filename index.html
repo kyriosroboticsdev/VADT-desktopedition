@@ -312,7 +312,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
 .hp-logo-text{font-family:var(--fd);font-weight:900;font-size:54px;letter-spacing:0.06em;line-height:1;margin-bottom:10px;}
 .hp-logo-text em{color:var(--gold);font-style:normal;}
 .hp-logo-tag{font-size:11px;color:var(--t3);letter-spacing:0.24em;text-transform:uppercase;font-family:var(--fd);font-weight:700;}
-.hp-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;width:100%;max-width:900px;}
+.hp-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;width:100%;max-width:1160px;}
 .hp-card{background:var(--s2);border:1px solid var(--b1);border-radius:14px;padding:30px 26px;cursor:pointer;transition:transform 0.18s,box-shadow 0.18s,border-color 0.18s;display:flex;flex-direction:column;gap:14px;position:relative;overflow:hidden;}
 .hp-card::after{content:'';position:absolute;inset:0;opacity:0;transition:opacity 0.18s;pointer-events:none;}
 .hp-card:hover{transform:translateY(-4px);box-shadow:0 20px 48px rgba(0,0,0,0.45);}
@@ -333,6 +333,10 @@ input[type=range]{width:100%;accent-color:var(--gold);}
 .hp-scout:hover .hp-card-cta{color:var(--green);}
 .hp-notebook:hover .hp-card-cta{color:var(--gold);}
 .hp-cad:hover .hp-card-cta{color:var(--blue);}
+.hp-sim{border-top:3px solid var(--red);}
+.hp-sim::after{background:linear-gradient(140deg,rgba(232,48,42,0.07) 0%,transparent 55%);}
+.hp-sim:hover{border-color:rgba(232,48,42,0.45);border-top-color:var(--red);}
+.hp-sim:hover .hp-card-cta{color:var(--red);}
 .hp-skip{background:transparent;border:1px solid var(--b1);color:var(--t3);font-size:12px;cursor:pointer;font-family:var(--fb);letter-spacing:0.05em;padding:7px 18px;border-radius:var(--r);transition:all 0.15s;}
 .hp-skip:hover{color:var(--t2);border-color:var(--b2);}
 </style>
@@ -363,6 +367,11 @@ input[type=range]{width:100%;accent-color:var(--gold);}
         <div class="hp-card-title">CAD Viewer</div>
         <div class="hp-card-desc">Import OBJ and STL files to visualize and inspect robot designs in full 3D with material support.</div>
         <div class="hp-card-cta">Open CAD Viewer →</div>
+      </div>
+      <div class="hp-card hp-sim" onclick="enterApp('simulator')">
+        <div class="hp-card-title">Simulator</div>
+        <div class="hp-card-desc">Drive your robot on a Push Back field, tune PID controllers, and test autonomous routines with physics simulation.</div>
+        <div class="hp-card-cta">Open Simulator →</div>
       </div>
     </div>
     <button class="hp-skip" onclick="enterApp(null)">Skip — enter app</button>
@@ -652,6 +661,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
     <button class="btn-o" onclick="stlImport()">+ Import Model</button>
     <button class="btn-o" id="stlSnapshotBtn" onclick="stlSnapshot()" style="display:none;">📸 Save View</button>
     <button class="btn-o" id="stlOrientBtn" onclick="stlToggleReorient()" style="display:none;">⟳ Reorient</button>
+    <button class="btn-o" id="stlConfigBtn" onclick="stlToggleConfigPanel()" style="display:none;">⚙ Config</button>
     <div style="margin-left:auto;display:flex;gap:7px;">
       <button class="btn-o" onclick="closeSTLViewer()">← Back</button>
     </div>
@@ -684,7 +694,16 @@ input[type=range]{width:100%;accent-color:var(--gold);}
           <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlRotateModel('z', 90)">+90°</button>
         </div>
         <button class="btn-o" style="font-size:11px;padding:3px 0;width:100%;margin-top:6px;text-align:center;" onclick="stlResetOrientation()">Reset</button>
-        <div style="margin-top:7px;font-size:10px;color:var(--t3);">Drag to freely rotate model</div>
+        <div style="border-top:1px solid var(--b1);margin-top:8px;padding-top:8px;">
+          <div style="font-size:10px;color:var(--t3);margin-bottom:5px;">Vertical Position</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px;">
+            <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlMoveModel(0.5)">↑↑</button>
+            <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlMoveModel(0.1)">↑</button>
+            <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlMoveModel(-0.1)">↓</button>
+            <button class="btn-o" style="font-size:11px;padding:3px 0;text-align:center;" onclick="stlMoveModel(-0.5)">↓↓</button>
+          </div>
+        </div>
+        <div style="margin-top:7px;font-size:10px;color:var(--t3);">Drag — rotate &nbsp;·&nbsp; Shift+drag — move up/down</div>
       </div>
       <!-- Viewport controls hint -->
       <div id="stlControlsHint" style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
@@ -694,6 +713,93 @@ input[type=range]{width:100%;accent-color:var(--gold);}
       <div id="stlLoading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--t1);">
         <div style="width:36px;height:36px;border:3px solid var(--s5);border-top-color:var(--gold);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
         <span style="font-size:13px;" id="stlLoadingMsg">Loading model…</span>
+      </div>
+    </div>
+    <!-- CAD Config Panel sidebar -->
+    <div id="stlConfigPanel" style="width:260px;background:var(--s1);border-left:1px solid var(--b1);display:none;flex-direction:column;overflow:hidden;flex-shrink:0;">
+      <div style="padding:10px 12px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+        <div style="font-family:var(--fd);font-size:11px;font-weight:700;letter-spacing:0.12em;color:var(--t3);text-transform:uppercase;">Robot Config</div>
+        <button class="btn-g" style="font-size:11px;padding:4px 10px;" onclick="cadSaveConfig()">Save .json</button>
+      </div>
+      <div style="padding:10px 12px;overflow-y:auto;flex:1;">
+        <!-- Robot name -->
+        <div style="margin-bottom:12px;">
+          <label style="font-size:10px;font-family:var(--fd);font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;">Robot Name</label>
+          <input class="ann-input" placeholder="Robot name" id="cadCfgName" oninput="STL.cadConfig&&(STL.cadConfig.name=this.value)" style="width:100%;margin-top:4px;"/>
+        </div>
+        <!-- Drivetrain -->
+        <div style="margin-bottom:12px;">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;margin-bottom:6px;">Drivetrain</div>
+          <div style="display:grid;grid-template-columns:1fr;gap:5px;">
+            <div><label style="font-size:10px;color:var(--t3);">Type</label>
+              <select class="ann-input" id="cadCfgDriveType" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.type=this.value)" style="width:100%;margin-top:2px;">
+                <option value="tank">Tank</option>
+                <option value="x-drive">X-Drive</option>
+                <option value="mecanum">Mecanum</option>
+              </select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
+              <div><label style="font-size:10px;color:var(--t3);">Wheel Ø (in)</label>
+                <input type="number" class="ann-input" id="cadCfgWheelDia" step="0.25" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.wheelDiameter=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+              <div><label style="font-size:10px;color:var(--t3);">Max RPM</label>
+                <input type="number" class="ann-input" id="cadCfgMaxRpm" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.maxRPM=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+              <div><label style="font-size:10px;color:var(--t3);">Track Width (in)</label>
+                <input type="number" class="ann-input" id="cadCfgTrackWidth" step="0.5" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.trackWidth=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+              <div><label style="font-size:10px;color:var(--t3);">Robot Width (in)</label>
+                <input type="number" class="ann-input" id="cadCfgRobotWidth" step="0.5" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.robotWidth=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+              <div><label style="font-size:10px;color:var(--t3);">Robot Length (in)</label>
+                <input type="number" class="ann-input" id="cadCfgRobotLength" step="0.5" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.robotLength=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+              <div><label style="font-size:10px;color:var(--t3);">Gear Ratio</label>
+                <input type="number" class="ann-input" id="cadCfgGearRatio" step="0.1" min="0.1" oninput="STL.cadConfig&&(STL.cadConfig.drivetrain.gearRatio=+this.value)" style="width:100%;margin-top:2px;"/>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Motors -->
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;">Motors</div>
+            <button class="btn-o" style="font-size:11px;padding:2px 7px;" onclick="cadAddMotor()">+ Add</button>
+          </div>
+          <div id="cadMotorList"><div style="font-size:11px;color:var(--t3);padding:4px 0;">No motors — click + Add</div></div>
+        </div>
+        <!-- Pistons -->
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;">Pistons / Pneumatics</div>
+            <button class="btn-o" style="font-size:11px;padding:2px 7px;" onclick="cadAddPiston()">+ Add</button>
+          </div>
+          <div id="cadPistonList"><div style="font-size:11px;color:var(--t3);padding:4px 0;">No pistons — click + Add</div></div>
+        </div>
+        <!-- Sensors -->
+        <div style="margin-bottom:12px;">
+          <div style="font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:0.1em;color:var(--t3);text-transform:uppercase;margin-bottom:6px;">Sensors</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
+            <div><label style="font-size:10px;color:var(--t3);">IMU Port</label>
+              <input type="number" class="ann-input" id="cadCfgImuPort" oninput="STL.cadConfig&&(STL.cadConfig.sensors.imuPort=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+            <div><label style="font-size:10px;color:var(--t3);">Odom Wheel Ø</label>
+              <input type="number" class="ann-input" id="cadCfgOdomWheelDia" step="0.25" oninput="STL.cadConfig&&(STL.cadConfig.sensors.odomWheelDia=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+            <div><label style="font-size:10px;color:var(--t3);">Odom Track Width</label>
+              <input type="number" class="ann-input" id="cadCfgOdomTrackWidth" step="0.5" oninput="STL.cadConfig&&(STL.cadConfig.sensors.odomTrackWidth=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+            <div><label style="font-size:10px;color:var(--t3);">Left Enc Port</label>
+              <input type="number" class="ann-input" id="cadCfgLeftEnc" oninput="STL.cadConfig&&(STL.cadConfig.sensors.leftEncoderPort=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+            <div><label style="font-size:10px;color:var(--t3);">Right Enc Port</label>
+              <input type="number" class="ann-input" id="cadCfgRightEnc" oninput="STL.cadConfig&&(STL.cadConfig.sensors.rightEncoderPort=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+            <div><label style="font-size:10px;color:var(--t3);">Mid Enc Port</label>
+              <input type="number" class="ann-input" id="cadCfgMidEnc" oninput="STL.cadConfig&&(STL.cadConfig.sensors.midEncoderPort=+this.value)" style="width:100%;margin-top:2px;"/>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -829,6 +935,7 @@ input[type=range]{width:100%;accent-color:var(--gold);}
   
         <!-- Viewport hint -->
         <div style="position:absolute;bottom:10px;right:12px;font-size:11px;color:var(--t3);pointer-events:none;text-align:right;line-height:1.8;">
+          WASD — drive &nbsp;·&nbsp; R/F — intake &nbsp;·&nbsp; Space — pistons<br>
           Left drag — orbit &nbsp;·&nbsp; Right drag — pan &nbsp;·&nbsp; Scroll — zoom
         </div>
       </div>

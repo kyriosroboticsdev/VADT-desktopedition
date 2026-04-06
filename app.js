@@ -659,6 +659,7 @@ function enterApp(section) {
   if (hp) hp.style.display = 'none';
   if (section === 'notebook') openNotebook();
   else if (section === 'cad') openSTLViewer();
+  else if (section === 'simulator') openSimulator();
 }
 function openNotebook(){const p=document.getElementById('notebookPage'),f=document.getElementById('notebookFrame');if(!f.src)f.src='notebook.html';p.style.display='flex';}
 function closeNotebook(){document.getElementById('notebookPage').style.display='none';}
@@ -1153,11 +1154,14 @@ const STL = {
   scene: null, camera: null, renderer: null, mesh: null,
   animId: null, models: [],  // { name, path }
   activeModel: null,
+  activeModelPath: null,
   mouse: { down: false, right: false, lastX: 0, lastY: 0 },
   spherical: { theta: 0.5, phi: 1.0, radius: 5 },
   target: new (typeof THREE !== 'undefined' ? THREE.Vector3 : Object)(),
   orient: { active: false },
   group: null,
+  cadConfig: null,
+  cadConfigVisible: false,
 };
 
 function openSTLViewer() {
@@ -1219,13 +1223,20 @@ function initSTLRenderer() {
     const dx = e.clientX - STL.mouse.lastX, dy = e.clientY - STL.mouse.lastY;
     STL.mouse.lastX = e.clientX; STL.mouse.lastY = e.clientY;
     if (STL.orient.active && STL.group && !STL.mouse.right) {
-      // Reorient mode: left drag rotates the model around camera-relative axes so
-      // dragging always feels correct regardless of current camera angle.
-      const speed = 0.008;
-      const camDir = STL.camera.position.clone().sub(STL.target).normalize();
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), camDir).normalize();
-      STL.group.rotateOnWorldAxis(right, -dy * speed);
-      STL.group.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), -dx * speed);
+      if (e.shiftKey) {
+        // Shift+drag: move model up/down
+        STL.group.position.y -= dy * STL.spherical.radius * 0.0012;
+        stlSaveOrientation();
+      } else {
+        // Reorient mode: left drag rotates the model around camera-relative axes so
+        // dragging always feels correct regardless of current camera angle.
+        const speed = 0.008;
+        const camDir = STL.camera.position.clone().sub(STL.target).normalize();
+        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), camDir).normalize();
+        STL.group.rotateOnWorldAxis(right, -dy * speed);
+        STL.group.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), -dx * speed);
+        stlSaveOrientation();
+      }
     } else if (STL.mouse.right) {
       // Pan
       const panSpeed = STL.spherical.radius * 0.001;
@@ -1295,8 +1306,37 @@ function renderSTLLibrary() {
 
 async function stlImport() {
   if (!window.electronAPI) return;
-  const filePath = await window.electronAPI.openFileDialog([{ name:'3D Models', extensions:['obj','stl'] }]);
+  const filePath = await window.electronAPI.openFileDialog([
+    { name: '3D Models / Sim Config', extensions: ['obj', 'stl', 'json'] },
+  ]);
   if (!filePath) return;
+
+  // If the user picked a simulation.json, hand off to the simulator
+  if (filePath.toLowerCase().endsWith('.json')) {
+    closeSTLViewer();
+    openSimulator();
+    // simLoadConfig reads the file via IPC, but we already have the path — call
+    // the IPC handler directly via the normal electronAPI flow so the config is
+    // resolved and the OBJ is loaded into the simulator.
+    if (window.electronAPI?.simLoadConfig) {
+      const config = await window.electronAPI.simLoadConfig();
+      if (config) {
+        SIM.config = config;
+        Object.keys(SIM.motors).forEach(k => delete SIM.motors[k]);
+        Object.keys(SIM.pistons).forEach(k => delete SIM.pistons[k]);
+        (config.motors  || []).forEach(m => { SIM.motors[m.id]  = { angle: 0, speed: 0 }; });
+        (config.pistons || []).forEach(p => { SIM.pistons[p.id] = { extended: false, t: 0 }; });
+        if (config.drivetrain) {
+          SIM.robot.width  = config.drivetrain.robotWidth  || 15;
+          SIM.robot.height = config.drivetrain.robotWidth  || 15;
+        }
+        if (config.objPath) await simLoadOBJ(config.objPath, config.mtlPath);
+        simSetStatus('Config loaded from CAD opener');
+      }
+    }
+    return;
+  }
+
   stlShowLoading('Importing…');
   const result = await window.electronAPI.stlSave(filePath);
   if (result) {
@@ -1331,7 +1371,7 @@ function stlToggleReorient() {
     btn.style.background = 'var(--gold)';
     btn.style.color = '#000';
     panel.style.display = '';
-    hint.textContent = 'Drag — rotate model  ·  Right drag — pan  ·  Scroll — zoom';
+    hint.textContent = 'Drag — rotate  ·  Shift+drag — move up/down  ·  Right drag — pan  ·  Scroll — zoom';
   } else {
     btn.style.background = '';
     btn.style.color = '';
@@ -1345,11 +1385,42 @@ function stlRotateModel(axis, deg) {
   const rad = deg * Math.PI / 180;
   const axes = { x: new THREE.Vector3(1,0,0), y: new THREE.Vector3(0,1,0), z: new THREE.Vector3(0,0,1) };
   STL.group.rotateOnWorldAxis(axes[axis], rad);
+  stlSaveOrientation();
+}
+
+function stlMoveModel(delta) {
+  if (!STL.group) return;
+  STL.group.position.y += delta;
+  stlSaveOrientation();
 }
 
 function stlResetOrientation() {
   if (!STL.group) return;
   STL.group.rotation.set(0, 0, 0);
+  STL.group.position.set(0, 0, 0);
+  stlSaveOrientation();
+}
+
+function stlSaveOrientation() {
+  if (!STL.group || !STL.activeModel) return;
+  const data = {
+    rx: STL.group.rotation.x,
+    ry: STL.group.rotation.y,
+    rz: STL.group.rotation.z,
+    py: STL.group.position.y,
+  };
+  localStorage.setItem('stl_orient_' + STL.activeModel, JSON.stringify(data));
+}
+
+function stlRestoreOrientation() {
+  if (!STL.group || !STL.activeModel) return;
+  try {
+    const raw = localStorage.getItem('stl_orient_' + STL.activeModel);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    STL.group.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
+    STL.group.position.y = d.py || 0;
+  } catch {}
 }
 
 // ─── LOAD MODEL ───────────────────────────────────────────────────────────────
@@ -1410,12 +1481,28 @@ async function loadSTLModel(filePath, name) {
     STL.target.set(0, 0, 0);
     STL.spherical = { theta: 0.5, phi: 1.0, radius: maxDim * scale * 1.8 };
     updateSTLCamera();
+    stlRestoreOrientation();
 
     document.getElementById('stlEmpty').style.display = 'none';
     document.getElementById('stlSnapshotBtn').style.display = '';
     document.getElementById('stlOrientBtn').style.display = '';
+    document.getElementById('stlConfigBtn').style.display = '';
     // Always leave reorient mode off between loads so the user starts fresh.
     if (STL.orient.active) stlToggleReorient();
+    // Store path and auto-open config panel for OBJ files
+    STL.activeModelPath = filePath;
+    if (filePath.toLowerCase().endsWith('.obj')) {
+      if (!STL.cadConfig) cadInitConfig(filePath);
+      else STL.cadConfig.objPath = filePath;
+      if (!STL.cadConfigVisible) {
+        STL.cadConfigVisible = true;
+        const panel = document.getElementById('stlConfigPanel');
+        const btn   = document.getElementById('stlConfigBtn');
+        if (panel) panel.style.display = 'flex';
+        if (btn) { btn.style.background = 'var(--gold)'; btn.style.color = '#000'; }
+      }
+      cadRenderConfigPanel();
+    }
   } catch (err) {
     alert('Failed to load model: ' + err.message);
     console.error('Model load error:', err);
@@ -1501,6 +1588,231 @@ function stlShowLoading(msg) {
 function stlHideLoading() {
   const el = document.getElementById('stlLoading');
   if (el) el.style.display = 'none';
+}
+
+// ─── CAD CONFIG PANEL ─────────────────────────────────────────────────────────
+function stlToggleConfigPanel() {
+  STL.cadConfigVisible = !STL.cadConfigVisible;
+  const panel = document.getElementById('stlConfigPanel');
+  const btn   = document.getElementById('stlConfigBtn');
+  if (!panel) return;
+  if (STL.cadConfigVisible) {
+    panel.style.display = 'flex';
+    if (btn) { btn.style.background = 'var(--gold)'; btn.style.color = '#000'; }
+    if (!STL.cadConfig) cadInitConfig(STL.activeModelPath || '');
+    cadRenderConfigPanel();
+  } else {
+    panel.style.display = 'none';
+    if (btn) { btn.style.background = ''; btn.style.color = ''; }
+  }
+}
+
+function cadInitConfig(objPath) {
+  STL.cadConfig = {
+    name: STL.activeModel || 'Robot',
+    objPath: objPath || '',
+    drivetrain: {
+      type: 'tank',
+      wheelDiameter: 3.25,
+      maxRPM: 450,
+      trackWidth: 12,
+      robotWidth: 15,
+      robotLength: 15,
+      gearRatio: 1.0,
+    },
+    motors: [],
+    pistons: [],
+    sensors: {
+      imuPort: 10,
+      odomWheelDia: 2.75,
+      odomTrackWidth: 7.0,
+      leftEncoderPort: 1,
+      rightEncoderPort: 2,
+      midEncoderPort: 3,
+    },
+  };
+}
+
+function cadRenderConfigPanel() {
+  const c = STL.cadConfig;
+  if (!c) return;
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  set('cadCfgName',         c.name || '');
+  set('cadCfgDriveType',    c.drivetrain?.type        || 'tank');
+  set('cadCfgWheelDia',     c.drivetrain?.wheelDiameter ?? 3.25);
+  set('cadCfgMaxRpm',       c.drivetrain?.maxRPM         ?? 450);
+  set('cadCfgTrackWidth',   c.drivetrain?.trackWidth      ?? 12);
+  set('cadCfgRobotWidth',   c.drivetrain?.robotWidth      ?? 15);
+  set('cadCfgRobotLength',  c.drivetrain?.robotLength     ?? 15);
+  set('cadCfgGearRatio',    c.drivetrain?.gearRatio       ?? 1.0);
+  set('cadCfgImuPort',      c.sensors?.imuPort            ?? 10);
+  set('cadCfgOdomWheelDia', c.sensors?.odomWheelDia       ?? 2.75);
+  set('cadCfgOdomTrackWidth',c.sensors?.odomTrackWidth    ?? 7.0);
+  set('cadCfgLeftEnc',      c.sensors?.leftEncoderPort    ?? 1);
+  set('cadCfgRightEnc',     c.sensors?.rightEncoderPort   ?? 2);
+  set('cadCfgMidEnc',       c.sensors?.midEncoderPort     ?? 3);
+
+  cadRenderMotors();
+  cadRenderPistons();
+}
+
+function cadRenderMotors() {
+  const el = document.getElementById('cadMotorList');
+  if (!el || !STL.cadConfig) return;
+  const motors = STL.cadConfig.motors || [];
+  if (!motors.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:4px 0;">No motors — click + Add</div>';
+    return;
+  }
+  el.innerHTML = motors.map((m, i) => `
+    <div style="background:var(--s3);border:1px solid var(--b1);border-radius:5px;padding:7px 8px;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
+        <input class="ann-input" placeholder="Motor ID" value="${m.id || ''}" style="flex:1;"
+          oninput="STL.cadConfig.motors[${i}].id=this.value"/>
+        <button class="ann-del" onclick="cadRemoveMotor(${i})">✕</button>
+      </div>
+      <div style="margin-bottom:4px;">
+        <label style="font-size:10px;color:var(--t3);">Mesh Name (from OBJ)</label>
+        <input class="ann-input" placeholder="e.g. left_wheel" value="${m.meshName || ''}" style="width:100%;margin-top:2px;"
+          oninput="STL.cadConfig.motors[${i}].meshName=this.value"/>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:4px;">
+        <div><label style="font-size:10px;color:var(--t3);">Port</label>
+          <input type="number" class="ann-input" value="${m.port ?? ''}" placeholder="1–21" style="width:100%;margin-top:2px;"
+            oninput="STL.cadConfig.motors[${i}].port=+this.value"/>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">RPM</label>
+          <input type="number" class="ann-input" value="${m.rpm ?? 600}" style="width:100%;margin-top:2px;"
+            oninput="STL.cadConfig.motors[${i}].rpm=+this.value"/>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">Axis</label>
+          <select class="ann-input" style="width:100%;margin-top:2px;" oninput="STL.cadConfig.motors[${i}].axis=this.value">
+            <option value="x" ${m.axis==='x'?'selected':''}>X</option>
+            <option value="y" ${m.axis==='y'?'selected':''}>Y</option>
+            <option value="z" ${m.axis==='z'?'selected':''}>Z</option>
+          </select>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">Role</label>
+          <select class="ann-input" style="width:100%;margin-top:2px;" oninput="STL.cadConfig.motors[${i}].role=this.value">
+            <option value="drive"    ${m.role==='drive'   ?'selected':''}>Drive</option>
+            <option value="intake"   ${m.role==='intake'  ?'selected':''}>Intake</option>
+            <option value="lift"     ${m.role==='lift'    ?'selected':''}>Lift</option>
+            <option value="flywheel" ${m.role==='flywheel'?'selected':''}>Flywheel</option>
+            <option value="other"    ${m.role==='other'   ?'selected':''}>Other</option>
+          </select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t2);cursor:pointer;">
+        <input type="checkbox" ${m.reversed?'checked':''} onchange="STL.cadConfig.motors[${i}].reversed=this.checked"/>
+        Reversed
+      </label>
+    </div>`).join('');
+}
+
+function cadRenderPistons() {
+  const el = document.getElementById('cadPistonList');
+  if (!el || !STL.cadConfig) return;
+  const pistons = STL.cadConfig.pistons || [];
+  if (!pistons.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:4px 0;">No pistons — click + Add</div>';
+    return;
+  }
+  el.innerHTML = pistons.map((p, i) => `
+    <div style="background:var(--s3);border:1px solid var(--b1);border-radius:5px;padding:7px 8px;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
+        <input class="ann-input" placeholder="Piston ID" value="${p.id || ''}" style="flex:1;"
+          oninput="STL.cadConfig.pistons[${i}].id=this.value"/>
+        <button class="ann-del" onclick="cadRemovePiston(${i})">✕</button>
+      </div>
+      <div style="margin-bottom:4px;">
+        <label style="font-size:10px;color:var(--t3);">Mesh Name (from OBJ)</label>
+        <input class="ann-input" placeholder="e.g. piston_arm" value="${p.meshName || ''}" style="width:100%;margin-top:2px;"
+          oninput="STL.cadConfig.pistons[${i}].meshName=this.value"/>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
+        <div><label style="font-size:10px;color:var(--t3);">Port</label>
+          <input class="ann-input" value="${p.port ?? ''}" placeholder="A–H" style="width:100%;margin-top:2px;"
+            oninput="STL.cadConfig.pistons[${i}].port=this.value"/>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">Axis</label>
+          <select class="ann-input" style="width:100%;margin-top:2px;" oninput="STL.cadConfig.pistons[${i}].axis=this.value">
+            <option value="x" ${p.axis==='x'?'selected':''}>X</option>
+            <option value="y" ${p.axis==='y'?'selected':''}>Y</option>
+            <option value="z" ${p.axis==='z'?'selected':''}>Z</option>
+          </select>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">Stroke (in)</label>
+          <input type="number" class="ann-input" value="${p.stroke ?? 2.5}" step="0.5" style="width:100%;margin-top:2px;"
+            oninput="STL.cadConfig.pistons[${i}].stroke=+this.value"/>
+        </div>
+        <div><label style="font-size:10px;color:var(--t3);">Pressure (psi)</label>
+          <input type="number" class="ann-input" value="${p.pressure ?? 100}" style="width:100%;margin-top:2px;"
+            oninput="STL.cadConfig.pistons[${i}].pressure=+this.value"/>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function cadAddMotor() {
+  if (!STL.cadConfig) return;
+  STL.cadConfig.motors.push({ id: `motor_${STL.cadConfig.motors.length + 1}`, meshName: '', port: STL.cadConfig.motors.length + 1, rpm: 600, axis: 'x', role: 'drive', reversed: false });
+  cadRenderMotors();
+}
+
+function cadRemoveMotor(i) {
+  if (!STL.cadConfig) return;
+  STL.cadConfig.motors.splice(i, 1);
+  cadRenderMotors();
+}
+
+function cadAddPiston() {
+  if (!STL.cadConfig) return;
+  STL.cadConfig.pistons.push({ id: `piston_${STL.cadConfig.pistons.length + 1}`, meshName: '', port: String.fromCharCode(65 + STL.cadConfig.pistons.length), axis: 'z', stroke: 2.5, pressure: 100 });
+  cadRenderPistons();
+}
+
+function cadRemovePiston(i) {
+  if (!STL.cadConfig) return;
+  STL.cadConfig.pistons.splice(i, 1);
+  cadRenderPistons();
+}
+
+function cadSyncFromForm() {
+  if (!STL.cadConfig) return;
+  const v = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const n = id => { const el = document.getElementById(id); return el ? +el.value : null; };
+  STL.cadConfig.name = v('cadCfgName') || 'Robot';
+  STL.cadConfig.drivetrain.type          = v('cadCfgDriveType') || 'tank';
+  STL.cadConfig.drivetrain.wheelDiameter = n('cadCfgWheelDia')   ?? 3.25;
+  STL.cadConfig.drivetrain.maxRPM        = n('cadCfgMaxRpm')     ?? 450;
+  STL.cadConfig.drivetrain.trackWidth    = n('cadCfgTrackWidth') ?? 12;
+  STL.cadConfig.drivetrain.robotWidth    = n('cadCfgRobotWidth') ?? 15;
+  STL.cadConfig.drivetrain.robotLength   = n('cadCfgRobotLength') ?? 15;
+  STL.cadConfig.drivetrain.gearRatio     = n('cadCfgGearRatio')  ?? 1.0;
+  STL.cadConfig.sensors.imuPort          = n('cadCfgImuPort')    ?? 10;
+  STL.cadConfig.sensors.odomWheelDia     = n('cadCfgOdomWheelDia') ?? 2.75;
+  STL.cadConfig.sensors.odomTrackWidth   = n('cadCfgOdomTrackWidth') ?? 7.0;
+  STL.cadConfig.sensors.leftEncoderPort  = n('cadCfgLeftEnc')    ?? 1;
+  STL.cadConfig.sensors.rightEncoderPort = n('cadCfgRightEnc')   ?? 2;
+  STL.cadConfig.sensors.midEncoderPort   = n('cadCfgMidEnc')     ?? 3;
+}
+
+async function cadSaveConfig() {
+  cadSyncFromForm();
+  if (!STL.cadConfig) return;
+  if (window.electronAPI?.simSaveConfig) {
+    const ok = await window.electronAPI.simSaveConfig(STL.cadConfig);
+    if (ok) setSt('Config saved', 'live');
+  } else {
+    // Fallback: download as JSON in browser
+    const blob = new Blob([JSON.stringify(STL.cadConfig, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (STL.cadConfig.name || 'robot') + '_config.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 }
 
 // ─── INIT ──────────────────────────────────────────────────────────────────────

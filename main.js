@@ -371,10 +371,6 @@ ipcMain.handle('google-auth', async (event, authUrl) => {
   });
 });
 
-const { ipcMain, dialog } = require('electron');
-const fs   = require('fs');
-const path = require('path');
- 
 // Where simulation configs are stored — one folder per robot
 const SIM_DIR = path.join(app.getPath('userData'), 'simconfigs');
 if (!fs.existsSync(SIM_DIR)) fs.mkdirSync(SIM_DIR, { recursive: true });
