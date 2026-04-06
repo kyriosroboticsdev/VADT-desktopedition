@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const fs     = require('fs');
 const os     = require('os');
 const { autoUpdater } = require('electron-updater');
-const { buildMenu } = require('./menu');
+
 
 // Allow the renderer and main process to address large CAD assemblies (1 GB+).
 // Must be set before app.whenReady().
